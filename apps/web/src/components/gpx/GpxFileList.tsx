@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import type { GpxFileRecord } from "@/lib/gpx-files";
 
 type GpxFileListProps = {
@@ -13,6 +14,15 @@ type GpxFileListProps = {
 const filesById = (files: GpxFileRecord[]) =>
   Object.fromEntries(files.map((f) => [f.id, f]));
 
+function reorderIds(ids: string[], draggedId: string, insertBeforeId: string): string[] {
+  if (draggedId === insertBeforeId) return ids;
+  const next = ids.filter((id) => id !== draggedId);
+  const insertIdx = next.indexOf(insertBeforeId);
+  if (insertIdx === -1) return ids;
+  next.splice(insertIdx, 0, draggedId);
+  return next;
+}
+
 export function GpxFileList({
   files,
   orderedFileIds,
@@ -20,8 +30,12 @@ export function GpxFileList({
   onToggle,
   onReorder,
 }: GpxFileListProps) {
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [previewOrder, setPreviewOrder] = useState<string[] | null>(null);
+
   const byId = filesById(files);
-  const ordered = orderedFileIds.map((id) => byId[id]).filter(Boolean) as GpxFileRecord[];
+  const order = previewOrder ?? orderedFileIds;
+  const ordered = order.map((id) => byId[id]).filter(Boolean) as GpxFileRecord[];
 
   if (ordered.length === 0) {
     return (
@@ -29,28 +43,54 @@ export function GpxFileList({
     );
   }
 
+  const applyPreview = useCallback(
+    (next: string[]) => {
+      const run = () => setPreviewOrder(next);
+      if (typeof document !== "undefined" && "startViewTransition" in document) {
+        (document as Document & { startViewTransition: (cb: () => void) => Promise<unknown> })
+          .startViewTransition(run);
+      } else {
+        run();
+      }
+    },
+    []
+  );
+
   function handleDragStart(e: React.DragEvent, id: string) {
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", id);
-    e.dataTransfer.setData("application/x-gpx-id", id);
+    setDraggedId(id);
+    setPreviewOrder([...orderedFileIds]);
   }
 
-  function handleDragOver(e: React.DragEvent) {
+  function handleDragEnd() {
+    setDraggedId(null);
+    setPreviewOrder(null);
+  }
+
+  function handleDragOver(e: React.DragEvent, overId: string) {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
+    // dataTransfer.getData() is only available on drop in Chrome; use state
+    const id = draggedId ?? e.dataTransfer.getData("text/plain");
+    if (!id || id === overId) return;
+    const current = previewOrder ?? orderedFileIds;
+    const next = reorderIds(current, id, overId);
+    if (next.join() !== current.join()) applyPreview(next);
   }
 
   function handleDrop(e: React.DragEvent, dropTargetId: string) {
     e.preventDefault();
-    const draggedId = e.dataTransfer.getData("text/plain");
-    if (!draggedId || draggedId === dropTargetId) return;
-    const idx = orderedFileIds.indexOf(draggedId);
-    const dropIdx = orderedFileIds.indexOf(dropTargetId);
-    if (idx === -1 || dropIdx === -1) return;
-    const next = [...orderedFileIds];
-    next.splice(idx, 1);
-    next.splice(next.indexOf(dropTargetId), 0, draggedId);
+    const id = e.dataTransfer.getData("text/plain");
+    if (!id || id === dropTargetId) {
+      setDraggedId(null);
+      setPreviewOrder(null);
+      return;
+    }
+    const next = reorderIds(previewOrder ?? orderedFileIds, id, dropTargetId);
     onReorder(next);
+    setDraggedId(null);
+    setPreviewOrder(null);
   }
 
   return (
@@ -59,14 +99,19 @@ export function GpxFileList({
         <li
           key={f.id}
           data-id={f.id}
-          className="flex items-center gap-2 rounded border border-transparent py-0.5"
-          onDragOver={handleDragOver}
+          className="flex items-center gap-2 rounded border border-transparent py-0.5 transition-[opacity,transform] duration-200 ease-out"
+          style={{
+            opacity: draggedId === f.id ? 0.6 : 1,
+            viewTransitionName: `gpx-item-${f.id}`,
+          } as React.CSSProperties}
+          onDragOver={(e) => handleDragOver(e, f.id)}
           onDrop={(e) => handleDrop(e, f.id)}
         >
           <span
             draggable
             onDragStart={(e) => handleDragStart(e, f.id)}
-            className="cursor-grab touch-none select-none text-slate-500 hover:text-slate-300"
+            onDragEnd={handleDragEnd}
+            className="cursor-grab touch-none select-none text-slate-500 hover:text-slate-300 active:cursor-grabbing"
             title="Drag to reorder"
             aria-label="Drag to reorder"
           >
