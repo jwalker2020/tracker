@@ -21,6 +21,7 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
   const mapRef = useRef<LeafletMap | null>(null);
   const layersRef = useRef<LeafletLayerGroup | null>(null);
   const LRef = useRef<typeof import("leaflet") | null>(null);
+  const prevFilesCountRef = useRef(0);
   const [basemap, setBasemap] = useState<"osm" | "usgs">("osm");
   const [ready, setReady] = useState(false);
 
@@ -97,6 +98,10 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
     const L = LRef.current;
     layersRef.current.clearLayers();
 
+    const prevCount = prevFilesCountRef.current;
+    const shouldFitBounds = files.length > prevCount;
+    prevFilesCountRef.current = files.length;
+
     const allBounds: import("leaflet").LatLngBounds[] = [];
 
     files.forEach((rec) => {
@@ -114,7 +119,7 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
             layersRef.current?.addLayer(poly);
             allBounds.push(L.latLngBounds(latlngs));
           });
-          if (allBounds.length > 0 && mapRef.current) {
+          if (shouldFitBounds && allBounds.length > 0 && mapRef.current) {
             const union = allBounds[0].clone();
             allBounds.slice(1).forEach((b) => union.extend(b));
             mapRef.current.fitBounds(union, { padding: [24, 24], maxZoom: 14 });
