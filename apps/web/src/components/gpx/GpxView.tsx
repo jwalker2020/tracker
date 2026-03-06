@@ -20,6 +20,9 @@ const COLLECTION = "gpx_files";
 
 export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
   const [files, setFiles] = useState<GpxFileRecord[]>(initialFiles);
+  const [orderedFileIds, setOrderedFileIds] = useState<string[]>(() =>
+    initialFiles.map((f) => f.id)
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
 
@@ -28,6 +31,13 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
     if (!res.ok) return;
     const list = (await res.json()) as GpxFileRecord[];
     setFiles(list);
+    setOrderedFileIds((prev) => {
+      const existing = new Set(list.map((f) => f.id));
+      return [
+        ...prev.filter((id) => existing.has(id)),
+        ...list.map((f) => f.id).filter((id) => !prev.includes(id)),
+      ];
+    });
   }, []);
 
   const onToggle = useCallback((id: string) => {
@@ -53,7 +63,14 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
     }
   }, [selectedIds, refetch]);
 
-  const selectedFiles = files.filter((f) => selectedIds.has(f.id));
+  const selectedFiles = orderedFileIds
+    .filter((id) => selectedIds.has(id))
+    .map((id) => files.find((f) => f.id === id))
+    .filter((f): f is GpxFileRecord => f != null);
+
+  const onReorder = useCallback((newOrderedIds: string[]) => {
+    setOrderedFileIds(newOrderedIds);
+  }, []);
 
   return (
     <div className="flex h-[calc(100vh-2rem)] gap-4 overflow-hidden">
@@ -72,7 +89,13 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
         </section>
         <section>
           <h2 className="mb-3 text-sm font-semibold text-slate-100">Files</h2>
-          <GpxFileList files={files} selectedIds={selectedIds} onToggle={onToggle} />
+          <GpxFileList
+            files={files}
+            orderedFileIds={orderedFileIds}
+            selectedIds={selectedIds}
+            onToggle={onToggle}
+            onReorder={onReorder}
+          />
         </section>
       </aside>
       <div className="min-w-0 flex-1">
