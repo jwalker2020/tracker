@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { GpxFileRecord } from "@/lib/gpx-files";
 
 type GpxFileListProps = {
@@ -32,6 +32,7 @@ export function GpxFileList({
 }: GpxFileListProps) {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [previewOrder, setPreviewOrder] = useState<string[] | null>(null);
+  const latestPreviewRef = useRef<string[] | null>(null);
 
   const byId = filesById(files);
   const order = previewOrder ?? orderedFileIds;
@@ -43,33 +44,33 @@ export function GpxFileList({
     );
   }
 
-  const applyPreview = useCallback(
-    (next: string[]) => {
-      const run = () => setPreviewOrder(next);
-      if (typeof document !== "undefined" && "startViewTransition" in document) {
-        (document as Document & { startViewTransition: (cb: () => void) => Promise<unknown> })
-          .startViewTransition(run);
-      } else {
-        run();
-      }
-    },
-    []
-  );
+  const applyPreview = useCallback((next: string[]) => {
+    latestPreviewRef.current = next;
+    setPreviewOrder(next);
+  }, []);
 
   function handleDragStart(e: React.DragEvent, id: string) {
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", id);
     setDraggedId(id);
-    setPreviewOrder([...orderedFileIds]);
+    const initial = [...orderedFileIds];
+    latestPreviewRef.current = initial;
+    setPreviewOrder(initial);
   }
 
   function handleDragEnd() {
+    const toCommit = latestPreviewRef.current;
+    latestPreviewRef.current = null;
     setDraggedId(null);
     setPreviewOrder(null);
+    if (toCommit && toCommit.join() !== orderedFileIds.join()) {
+      onReorder(toCommit);
+    }
   }
 
   function handleDragOver(e: React.DragEvent, overId: string) {
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
     // dataTransfer.getData() is only available on drop in Chrome; use state
     const id = draggedId ?? e.dataTransfer.getData("text/plain");
@@ -81,14 +82,17 @@ export function GpxFileList({
 
   function handleDrop(e: React.DragEvent, dropTargetId: string) {
     e.preventDefault();
-    const id = e.dataTransfer.getData("text/plain");
+    e.stopPropagation();
+    // Use state fallback: getData() can be empty on drop in some browsers (e.g. Safari)
+    const id = (e.dataTransfer.getData("text/plain") || draggedId) ?? "";
     if (!id || id === dropTargetId) {
-      setDraggedId(null);
-      setPreviewOrder(null);
+      // Don't clear ref here so handleDragEnd can still commit the preview order
       return;
     }
-    const next = reorderIds(previewOrder ?? orderedFileIds, id, dropTargetId);
+    const current = latestPreviewRef.current ?? previewOrder ?? orderedFileIds;
+    const next = reorderIds(current, id, dropTargetId);
     onReorder(next);
+    latestPreviewRef.current = null;
     setDraggedId(null);
     setPreviewOrder(null);
   }
@@ -102,8 +106,7 @@ export function GpxFileList({
           className="flex items-center gap-2 rounded border border-transparent py-0.5 transition-[opacity,transform] duration-200 ease-out"
           style={{
             opacity: draggedId === f.id ? 0.6 : 1,
-            viewTransitionName: `gpx-item-${f.id}`,
-          } as React.CSSProperties}
+          }}
           onDragOver={(e) => handleDragOver(e, f.id)}
           onDrop={(e) => handleDrop(e, f.id)}
         >
