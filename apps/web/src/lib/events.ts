@@ -1,4 +1,4 @@
-import pb from "@/lib/pb";
+import pb from "@/lib/pocketbase";
 
 export type CalendarEvent = {
   id: string;

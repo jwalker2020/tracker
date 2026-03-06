@@ -1,9 +1,9 @@
 {
   "name": "fullstack-cursor-starter",
   "private": true,
-  "packageManager": "pnpm@10",
+  "packageManager": "pnpm@10.30.3",
   "scripts": {
-    "dev": "pnpm --filter web dev",
+    "dev": "pnpm -C apps/web dev",
     "build": "pnpm --filter web build",
     "lint": "pnpm --filter web lint"
   }

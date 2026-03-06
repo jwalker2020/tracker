@@ -1,0 +1,12 @@
+node_modules
+.next
+dist
+build
+coverage
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+*.log
+*.map
+apps/pb/pb_data
+apps/pb/pocketbase*

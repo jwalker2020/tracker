@@ -1,7 +1,10 @@
-Place the PocketBase binary in this folder and run:
+Place the PocketBase binary for your platform in this folder (`apps/pb/`), then run:
 
 ```bash
 ./pocketbase serve
 ```
 
-Data will be stored in `pb_data/`.
+By default, PocketBase will:
+
+- Listen on `http://localhost:8090`
+- Store data in `pb_data/`
