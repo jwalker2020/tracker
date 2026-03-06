@@ -1,0 +1,9 @@
+node_modules
+.pnpm-store
+.next
+out
+.env
+.env.local
+.DS_Store
+apps/pb/pb_data
+apps/pb/pocketbase*
