@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GpxFileRecord } from "@/lib/gpx-files";
+import pb from "@/lib/pocketbase";
 import { GpxUploadForm } from "./GpxUploadForm";
 import { GpxFileList } from "./GpxFileList";
 
@@ -15,9 +16,12 @@ type GpxViewProps = {
   baseUrl: string;
 };
 
+const COLLECTION = "gpx_files";
+
 export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
   const [files, setFiles] = useState<GpxFileRecord[]>(initialFiles);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const refetch = useCallback(async () => {
     const res = await fetch("/api/gpx/files");
@@ -35,6 +39,20 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
     });
   }, []);
 
+  const deleteSelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    setDeleting(true);
+    try {
+      await Promise.all([...selectedIds].map((id) => pb.collection(COLLECTION).delete(id)));
+      setSelectedIds(new Set());
+      await refetch();
+    } catch {
+      // leave selection and list as is on error
+    } finally {
+      setDeleting(false);
+    }
+  }, [selectedIds, refetch]);
+
   const selectedFiles = files.filter((f) => selectedIds.has(f.id));
 
   return (
@@ -43,6 +61,14 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
         <section>
           <h2 className="mb-3 text-sm font-semibold text-slate-100">Upload GPX</h2>
           <GpxUploadForm onUploadSuccess={refetch} />
+          <button
+            type="button"
+            onClick={deleteSelected}
+            disabled={selectedIds.size === 0 || deleting}
+            className="mt-3 w-full rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm font-medium text-red-200 hover:bg-red-900/40 disabled:opacity-50 disabled:hover:bg-red-950/40"
+          >
+            {deleting ? "Deleting…" : "Delete selected"}
+          </button>
         </section>
         <section>
           <h2 className="mb-3 text-sm font-semibold text-slate-100">Files</h2>
