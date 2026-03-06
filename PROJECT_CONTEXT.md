@@ -20,7 +20,7 @@
 ## Rules
 - Use App Router only
 - Do not use `next/router`
-- In Next.js 16, dynamic route params are async
+- In Next.js 16, dynamic route params are async (e.g. `params: Promise<{ slug: string }>`, then `await params`)
 - Prefer server components
 - Keep styling in Tailwind
 - Keep TypeScript strict
