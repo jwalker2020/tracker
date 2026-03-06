@@ -13,6 +13,16 @@ export default function HomePage() {
           Cursor.
         </p>
 
+        <p className="text-sm text-slate-300">
+          <Link
+            href="/gpx"
+            className="font-medium text-sky-400 underline underline-offset-4"
+          >
+            GPX Viewer
+          </Link>{" "}
+          – upload and view GPX tracks on a map.
+        </p>
+
         <section className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
           <h2 className="text-sm font-medium text-slate-100">Getting started</h2>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-200">

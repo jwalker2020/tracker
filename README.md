@@ -39,3 +39,25 @@ NEXT_PUBLIC_PB_URL=http://localhost:8090
 ```bash
 pnpm dev
 ```
+
+## GPX Viewer
+
+The **GPX Viewer** at `/gpx` lets you upload GPX files, store them in PocketBase, and view one or more tracks on a Leaflet map (OpenStreetMap or USGS Topo).
+
+### PocketBase collection for GPX
+
+In the PocketBase admin (e.g. http://localhost:8090/_/), create a collection **`gpx_files`** with these fields:
+
+| Field        | Type   | Notes                    |
+| ------------ | ------ | ------------------------ |
+| `name`       | Text   | Display name             |
+| `file`       | File   | Single file (.gpx)       |
+| `uploadedBy` | Text   | Optional                  |
+| `boundsJson` | Text   | JSON bounds              |
+| `centerLat`  | Number |                          |
+| `centerLng`  | Number |                          |
+| `trackCount` | Number |                          |
+| `pointCount` | Number |                          |
+| `color`      | Text   | Hex color for the track  |
+
+The app fills these on upload; you only need to create the collection and fields.
