@@ -5,10 +5,42 @@ import { parseGpx, boundsToJson } from "@/lib/gpx-parse";
 import pb from "@/lib/pocketbase";
 
 const DEFAULT_COLORS = ["#3b82f6", "#22c55e", "#eab308", "#ef4444", "#8b5cf6"];
+const UPLOAD_TIMEOUT_MS = 30_000;
 
 type GpxUploadFormProps = {
   onUploadSuccess: () => void;
 };
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("Upload timed out. Is PocketBase running at NEXT_PUBLIC_PB_URL?")), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
+function getErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (raw.includes("Missing or invalid collection") || raw.includes("invalid collection context")) {
+    return "gpx_files collection not loaded. Run: cd apps/pb && ./pocketbase migrate up, then restart PocketBase.";
+  }
+  if (err instanceof Error) return err.message;
+  const o = err as { message?: string; data?: { [key: string]: { message?: string } } };
+  if (o?.data) {
+    const first = Object.values(o.data)[0];
+    if (first?.message) return first.message;
+  }
+  if (typeof o?.message === "string") return o.message;
+  return "Upload failed.";
+}
 
 export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
   const [name, setName] = useState("");
@@ -51,13 +83,13 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
       formData.append("pointCount", String(parsed.pointCount));
       formData.append("color", color);
 
-      await pb.collection("gpx_files").create(formData);
+      await withTimeout(pb.collection("gpx_files").create(formData), UPLOAD_TIMEOUT_MS);
       form.reset();
       setName("");
       setColor(DEFAULT_COLORS[0]);
       onUploadSuccess();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed.");
+      setError(getErrorMessage(err));
     } finally {
       setUploading(false);
     }

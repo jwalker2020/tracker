@@ -27,13 +27,33 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
   useEffect(() => {
     if (typeof window === "undefined" || !containerRef.current) return;
 
+    // Remove any existing map so the container can be reused (e.g. React Strict Mode double-mount)
+    if (mapRef.current) {
+      mapRef.current.remove();
+      mapRef.current = null;
+      layersRef.current = null;
+      LRef.current = null;
+    }
+
+    let cancelled = false;
     const init = async () => {
       const L = (await import("leaflet")).default;
       await import("leaflet/dist/leaflet.css");
+      if (cancelled || !containerRef.current) return;
       LRef.current = L;
 
       if (!containerRef.current) return;
+      // Remove map from a previous init (e.g. Strict Mode left container initialized)
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        layersRef.current = null;
+      }
       const map = L.map(containerRef.current).setView(DEFAULT_CENTER, DEFAULT_ZOOM) as LeafletMap;
+      if (cancelled) {
+        map.remove();
+        return;
+      }
       mapRef.current = map;
 
       const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -55,10 +75,11 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
         else usgs.addTo(map);
       };
       map.setBase = setBase;
-      setReady(true);
+      if (!cancelled) setReady(true);
     };
     init();
     return () => {
+      cancelled = true;
       mapRef.current?.remove();
       mapRef.current = null;
       layersRef.current = null;
