@@ -21,7 +21,6 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
   const mapRef = useRef<LeafletMap | null>(null);
   const layersRef = useRef<LeafletLayerGroup | null>(null);
   const LRef = useRef<typeof import("leaflet") | null>(null);
-  const prevFilesCountRef = useRef(0);
   const [basemap, setBasemap] = useState<"osm" | "usgs">("osm");
   const [ready, setReady] = useState(false);
 
@@ -98,12 +97,29 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
     const L = LRef.current;
     layersRef.current.clearLayers();
 
-    const prevCount = prevFilesCountRef.current;
-    const shouldFitBounds = files.length > prevCount;
-    prevFilesCountRef.current = files.length;
+    if (files.length === 0) return;
 
-    const allBounds: import("leaflet").LatLngBounds[] = [];
+    // Fit map to selected files' bounding boxes immediately using stored metadata
+    let minLat = Infinity, minLng = Infinity, maxLat = -Infinity, maxLng = -Infinity;
+    for (const rec of files) {
+      try {
+        const b = JSON.parse(rec.boundsJson) as { south: number; west: number; north: number; east: number };
+        if (Number.isFinite(b.south) && Number.isFinite(b.west) && Number.isFinite(b.north) && Number.isFinite(b.east)) {
+          minLat = Math.min(minLat, b.south);
+          minLng = Math.min(minLng, b.west);
+          maxLat = Math.max(maxLat, b.north);
+          maxLng = Math.max(maxLng, b.east);
+        }
+      } catch {
+        // skip invalid boundsJson
+      }
+    }
+    if (minLat <= maxLat && minLng <= maxLng && mapRef.current) {
+      const union = L.latLngBounds([minLat, minLng], [maxLat, maxLng]);
+      mapRef.current.fitBounds(union, { padding: [24, 24], maxZoom: 14 });
+    }
 
+    // Draw tracks (async)
     files.forEach((rec) => {
       const url = `${baseUrl}/api/files/gpx_files/${rec.id}/${rec.file}`;
       const color = rec.color || "#3b82f6";
@@ -117,20 +133,10 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
             const latlngs = points.map(([lat, lng]) => L.latLng(lat, lng));
             const poly = L.polyline(latlngs, { color, weight: 3 });
             layersRef.current?.addLayer(poly);
-            allBounds.push(L.latLngBounds(latlngs));
           });
-          if (shouldFitBounds && allBounds.length > 0 && mapRef.current) {
-            const union = allBounds[0].clone();
-            allBounds.slice(1).forEach((b) => union.extend(b));
-            mapRef.current.fitBounds(union, { padding: [24, 24], maxZoom: 14 });
-          }
         })
         .catch(() => {});
     });
-
-    if (files.length === 0 && mapRef.current) {
-      mapRef.current.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
-    }
   }, [ready, baseUrl, files]);
 
   return (
