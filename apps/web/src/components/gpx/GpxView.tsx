@@ -31,13 +31,7 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
     if (!res.ok) return;
     const list = (await res.json()) as GpxFileRecord[];
     setFiles(list);
-    setOrderedFileIds((prev) => {
-      const existing = new Set(list.map((f) => f.id));
-      return [
-        ...prev.filter((id) => existing.has(id)),
-        ...list.map((f) => f.id).filter((id) => !prev.includes(id)),
-      ];
-    });
+    setOrderedFileIds(list.map((f) => f.id));
   }, []);
 
   const onToggle = useCallback((id: string) => {
@@ -68,9 +62,21 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
     .map((id) => files.find((f) => f.id === id))
     .filter((f): f is GpxFileRecord => f != null);
 
-  const onReorder = useCallback((newOrderedIds: string[]) => {
-    setOrderedFileIds(newOrderedIds);
-  }, []);
+  const onReorder = useCallback(
+    async (newOrderedIds: string[]) => {
+      setOrderedFileIds(newOrderedIds);
+      try {
+        await Promise.all(
+          newOrderedIds.map((id, index) =>
+            pb.collection(COLLECTION).update(id, { sortOrder: index })
+          )
+        );
+      } catch {
+        await refetch();
+      }
+    },
+    [refetch]
+  );
 
   return (
     <div className="flex h-[calc(100vh-2rem)] gap-4 overflow-hidden">

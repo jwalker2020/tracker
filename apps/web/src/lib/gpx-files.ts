@@ -11,6 +11,7 @@ export type GpxFileRecord = {
   trackCount: number;
   pointCount: number;
   color: string;
+  sortOrder?: number;
   created: string;
   updated: string;
 };
@@ -19,7 +20,12 @@ const COLLECTION = "gpx_files";
 
 export async function getGpxFilesList(): Promise<GpxFileRecord[]> {
   const res = await pb.collection(COLLECTION).getList<GpxFileRecord>(1, 500);
-  res.items.sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
+  res.items.sort((a, b) => {
+    const aOrder = a.sortOrder ?? Infinity;
+    const bOrder = b.sortOrder ?? Infinity;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return new Date(b.created).getTime() - new Date(a.created).getTime();
+  });
   return res.items;
 }
 

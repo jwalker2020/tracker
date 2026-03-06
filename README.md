@@ -59,5 +59,6 @@ In the PocketBase admin (e.g. http://localhost:8090/_/), create a collection **`
 | `trackCount` | Number |                          |
 | `pointCount` | Number |                          |
 | `color`      | Text   | Hex color for the track  |
+| `sortOrder`  | Number | Optional; set by migrations. Used for persistent list order. |
 
-The app fills these on upload; you only need to create the collection and fields.
+The app fills these on upload. Run `./pocketbase migrate up` from `apps/pb` so migrations add `sortOrder` and allow updates; the GPX list order is then stored in the database.
