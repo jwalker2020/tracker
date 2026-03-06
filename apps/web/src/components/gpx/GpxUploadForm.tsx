@@ -4,7 +4,10 @@ import { useState } from "react";
 import { parseGpx, boundsToJson } from "@/lib/gpx-parse";
 import pb from "@/lib/pocketbase";
 
-const DEFAULT_COLORS = ["#3b82f6", "#22c55e", "#eab308", "#ef4444", "#8b5cf6"];
+const DEFAULT_COLORS = [
+  "#3b82f6", "#22c55e", "#eab308", "#ef4444", "#8b5cf6",
+  "#f97316", "#06b6d4", "#ec4899", "#84cc16",
+];
 const UPLOAD_TIMEOUT_MS = 30_000;
 
 type GpxUploadFormProps = {
