@@ -140,9 +140,9 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
   }, [ready, baseUrl, files]);
 
   return (
-    <div className={`relative h-full w-full ${className}`}>
+    <div className={`relative h-full w-full overflow-visible ${className}`}>
       <div ref={containerRef} className="h-full w-full min-h-[300px] rounded-lg bg-slate-900" />
-      <div className="absolute right-2 top-2 flex flex-col gap-1 rounded border border-slate-700 bg-slate-900/95 p-1 shadow">
+      <div className="absolute left-2 bottom-12 z-[1000] flex flex-col gap-1 rounded border border-slate-700 bg-slate-900/95 p-1.5 shadow">
         <button
           type="button"
           onClick={() => setBasemap("osm")}
