@@ -53,22 +53,28 @@ export function extractPointsAndBounds(gpxText: string): GpxPointsAndBounds {
     maxLat = -Infinity,
     maxLng = -Infinity;
 
-  const trkpts = doc.querySelectorAll("trkpt");
-  const rtepts = doc.querySelectorAll("rtept");
-  const nodes = [...trkpts, ...rtepts];
+  // xmldom does not implement querySelectorAll; use getElementsByTagName
+  const trkpts = doc.getElementsByTagName("trkpt");
+  const rtepts = doc.getElementsByTagName("rtept");
 
-  for (let i = 0; i < nodes.length; i++) {
-    const pt = nodes[i];
-    if (!pt) continue;
-    const lat = parseFloatAttr(pt, "lat");
-    const lon = parseFloatAttr(pt, "lon");
-    if (!isFiniteCoord(lat) || !isFiniteLng(lon)) continue;
-    points.push([lat, lon]);
-    minLat = Math.min(minLat, lat);
-    minLng = Math.min(minLng, lon);
-    maxLat = Math.max(maxLat, lat);
-    maxLng = Math.max(maxLng, lon);
+  function collectPoints(
+    list: { length: number; item(i: number): Element | null }
+  ): void {
+    for (let i = 0; i < list.length; i++) {
+      const pt = list.item(i);
+      if (!pt) continue;
+      const lat = parseFloatAttr(pt, "lat");
+      const lon = parseFloatAttr(pt, "lon");
+      if (!isFiniteCoord(lat) || !isFiniteLng(lon)) continue;
+      points.push([lat, lon]);
+      minLat = Math.min(minLat, lat);
+      minLng = Math.min(minLng, lon);
+      maxLat = Math.max(maxLat, lat);
+      maxLng = Math.max(maxLng, lon);
+    }
   }
+  collectPoints(trkpts);
+  collectPoints(rtepts);
 
   if (points.length === 0) {
     return EMPTY;

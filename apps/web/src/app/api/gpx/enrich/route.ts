@@ -26,6 +26,7 @@ export async function POST(request: Request) {
   if (!demBasePath) {
     return NextResponse.json({
       ok: true,
+      skipped: true,
       warning: "Elevation enrichment skipped. Set DEM_BASE_PATH to enable DEM elevation.",
     });
   }
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
   if (!baseUrl) {
     return NextResponse.json({
       ok: true,
+      skipped: true,
       warning: "Elevation enrichment skipped. NEXT_PUBLIC_PB_URL is not set.",
     });
   }

@@ -65,10 +65,11 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const form = e.currentTarget;
     setError(null);
     setWarning(null);
 
-    const fileInput = e.currentTarget.querySelector<HTMLInputElement>('input[type="file"]');
+    const fileInput = form.querySelector<HTMLInputElement>('input[type="file"]');
     const file = fileInput?.files?.[0];
     if (!file) {
       setError("Select a GPX file.");
@@ -122,7 +123,7 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
         pb.collection("gpx_files").create(formData),
         UPLOAD_TIMEOUT_MS
       );
-      e.currentTarget.reset();
+      form.reset();
       setName("");
       setColor(DEFAULT_COLORS[0]);
       setSuccess(true);
@@ -135,8 +136,8 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: record.id }),
         });
-        const data = (await res.json()) as { ok?: boolean; warning?: string; error?: string };
-        if (data.warning) setWarning(data.warning);
+        const data = (await res.json()) as { ok?: boolean; skipped?: boolean; warning?: string; error?: string };
+        if (data.warning && !data.skipped) setWarning(data.warning);
         if (data.ok !== false && res.ok) onUploadSuccess();
       } catch {
         setWarning("Elevation enrichment could not be completed.");

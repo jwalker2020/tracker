@@ -2,7 +2,60 @@
 
 Server-side pipeline to sample elevation from local GeoTIFF DEM tiles for GPX tracks and compute elevation stats.
 
-## Folder structure
+## How to get DEM GeoTIFFs
+
+Free sources (download GeoTIFF format, not just imagery):
+
+- **US (3DEP)**  
+  [USGS National Map](https://apps.nationalmap.gov/downloader/) → Elevation Products → 1/3 arc-second or 1 arc-second DEM. Pick an area and download as GeoTIFF.
+- **Global**  
+  [OpenTopography](https://opentopography.org/) (various DEMs), [Copernicus DEM](https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model), or [SRTM](https://www2.jpl.nasa.gov/srtm/) (often in GeoTIFF).
+- **Other regions**  
+  Many countries provide national DEMs (e.g. LIDAR) from geological or mapping agencies; look for “DEM” or “DTM” in GeoTIFF.
+
+You need **GeoTIFF** rasters with an affine transform (the app uses origin + resolution). CRS is usually UTM or similar; the manifest (below) must list the correct `crs` for each tile.
+
+## Where to put them
+
+1. **Pick a folder** on the machine where the Next.js app runs (e.g. `/data/dem`, `~/dem`, or a path inside your project). The app only reads files; it does not write there.
+
+2. **Put all GeoTIFF tiles in that folder** (or in subfolders and reference them by relative path in the manifest).
+
+3. **Create `manifest.json`** in that folder. The app loads this to know which tiles exist and their WGS84 bbox and CRS. Example:
+
+   ```json
+   {
+     "tiles": [
+       {
+         "path": "n41_w076_1arc_v3.tif",
+         "bbox": [-76, 41, -75, 42],
+         "crs": "EPSG:32618",
+         "nodata": -9999
+       }
+     ]
+   }
+   ```
+   - `path`: filename (or path relative to the folder), e.g. `"tile1.tif"` or `"subdir/tile2.tif"`.
+   - `bbox`: WGS84 `[west, south, east, north]` (decimal degrees). Must contain the tile’s coverage so the app can find which tile to use for a GPX bbox.
+   - `crs`: proj4 CRS string for the raster (e.g. `"EPSG:32618"` for UTM 18N). Must match the GeoTIFF’s actual CRS.
+   - `nodata`: optional; pixel value that means “no data” (often `-9999`).
+
+4. **Set the env var** so the app knows that folder:
+   ```bash
+   DEM_BASE_PATH=/absolute/path/to/that/folder
+   ```
+   In local dev, put that in `apps/web/.env.local` and restart the dev server.
+
+To get `bbox` and `crs` for a GeoTIFF you can use **GDAL** (if installed):
+
+```bash
+gdalsrsinfo -o proj4 your_tile.tif   # crs (use EPSG:... if possible)
+gdalinfo your_tile.tif               # look for "Upper Left", "Lower Right" in projected coords, then convert to lon/lat, or use gdaltransform
+```
+
+Alternatively you can use [QGIS](https://qgis.org/) (Layer → Properties → Information / Source) or a small script that reads the GeoTIFF header and writes `manifest.json`.
+
+## Folder structure (code)
 
 ```
 apps/web/src/lib/dem/

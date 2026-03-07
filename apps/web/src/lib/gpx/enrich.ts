@@ -26,17 +26,26 @@ function bboxToBounds(turfBbox: number[]): GpxBounds {
   return { south, west, north, east };
 }
 
+/** xmldom does not implement querySelectorAll/querySelector; use getElementsByTagName. */
 function getElevationsFromDoc(doc: Document): number[] {
   const elevations: number[] = [];
-  const points = doc.querySelectorAll("trkpt, rtept");
-  points.forEach((pt) => {
-    const el = pt.querySelector("ele");
-    const text = el?.textContent?.trim();
-    if (text) {
-      const v = parseFloat(text);
-      if (!Number.isNaN(v)) elevations.push(v);
+  const trkpts = doc.getElementsByTagName("trkpt");
+  const rtepts = doc.getElementsByTagName("rtept");
+  function collect(list: { length: number; item(i: number): Element | null }): void {
+    for (let i = 0; i < list.length; i++) {
+      const pt = list.item(i);
+      if (!pt) continue;
+      const eleList = pt.getElementsByTagName("ele");
+      const el = eleList.length > 0 ? eleList.item(0) : null;
+      const text = el?.textContent?.trim();
+      if (text) {
+        const v = parseFloat(text);
+        if (!Number.isNaN(v)) elevations.push(v);
+      }
     }
-  });
+  }
+  collect(trkpts);
+  collect(rtepts);
   return elevations;
 }
 
