@@ -34,6 +34,11 @@ export function GpxFileList({
   const [previewOrder, setPreviewOrder] = useState<string[] | null>(null);
   const latestPreviewRef = useRef<string[] | null>(null);
 
+  const applyPreview = useCallback((next: string[]) => {
+    latestPreviewRef.current = next;
+    setPreviewOrder(next);
+  }, []);
+
   const byId = filesById(files);
   const order = previewOrder ?? orderedFileIds;
   const ordered = order.map((id) => byId[id]).filter(Boolean) as GpxFileRecord[];
@@ -43,11 +48,6 @@ export function GpxFileList({
       <p className="text-sm text-slate-400">No GPX files yet. Upload one above.</p>
     );
   }
-
-  const applyPreview = useCallback((next: string[]) => {
-    latestPreviewRef.current = next;
-    setPreviewOrder(next);
-  }, []);
 
   function handleDragStart(e: React.DragEvent, id: string) {
     e.dataTransfer.effectAllowed = "move";
