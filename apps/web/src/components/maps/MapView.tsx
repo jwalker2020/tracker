@@ -10,14 +10,13 @@ const DEFAULT_ZOOM = 4;
 type MapViewProps = {
   baseUrl: string;
   files: GpxFileRecord[];
-  lastSelectedId?: string | null;
   className?: string;
 };
 
 type LeafletMap = import("leaflet").Map & { setBase?: (w: "osm" | "usgs") => void };
 type LeafletLayerGroup = import("leaflet").LayerGroup;
 
-export function MapView({ baseUrl, files, lastSelectedId = null, className = "" }: MapViewProps) {
+export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const layersRef = useRef<LeafletLayerGroup | null>(null);
@@ -100,43 +99,33 @@ export function MapView({ baseUrl, files, lastSelectedId = null, className = "" 
 
     if (files.length === 0) return;
 
-    // When user selects a GPX file, zoom to show the latest track selected (that file only)
-    const toFit = lastSelectedId ? files.find((f) => f.id === lastSelectedId) : null;
-    if (mapRef.current && toFit) {
-      try {
-        const b = JSON.parse(toFit.boundsJson) as { south: number; west: number; north: number; east: number };
-        if (Number.isFinite(b.south) && Number.isFinite(b.west) && Number.isFinite(b.north) && Number.isFinite(b.east)) {
-          const bounds = L.latLngBounds([b.south, b.west], [b.north, b.east]);
-          mapRef.current.fitBounds(bounds, { padding: [24, 24], maxZoom: 14 });
-        } else if (Number.isFinite(toFit.centerLat) && Number.isFinite(toFit.centerLng)) {
-          mapRef.current.setView([toFit.centerLat, toFit.centerLng], 12);
-        }
-      } catch {
-        if (Number.isFinite(toFit.centerLat) && Number.isFinite(toFit.centerLng)) {
-          mapRef.current.setView([toFit.centerLat, toFit.centerLng], 12);
-        }
-      }
-    }
-
-    // Draw tracks (async)
-    files.forEach((rec) => {
-      const url = `${baseUrl}/api/files/gpx_files/${rec.id}/${rec.file}`;
-      const color = rec.color || "#3b82f6";
-
-      fetch(url)
-        .then((r) => r.text())
-        .then((gpxText) => {
+    // Draw tracks in list order: first file at bottom (back), last file on top (front)
+    let cancelled = false;
+    (async () => {
+      for (const rec of files) {
+        if (cancelled || !layersRef.current) return;
+        const url = `${baseUrl}/api/files/gpx_files/${rec.id}/${rec.file}`;
+        const color = rec.color || "#3b82f6";
+        try {
+          const res = await fetch(url);
+          const gpxText = await res.text();
+          if (cancelled || !layersRef.current) return;
           const { tracks } = parseGpx(gpxText);
-          tracks.forEach((points) => {
-            if (points.length < 2) return;
+          for (const points of tracks) {
+            if (points.length < 2) continue;
             const latlngs = points.map(([lat, lng]) => L.latLng(lat, lng));
             const poly = L.polyline(latlngs, { color, weight: 3 });
             layersRef.current?.addLayer(poly);
-          });
-        })
-        .catch(() => {});
-    });
-  }, [ready, baseUrl, files, lastSelectedId]);
+          }
+        } catch {
+          // skip failed fetch
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, baseUrl, files]);
 
   return (
     <div className={`relative h-full w-full overflow-visible ${className}`}>

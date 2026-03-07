@@ -24,7 +24,6 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
     initialFiles.map((f) => f.id)
   );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const refetch = useCallback(async () => {
@@ -42,9 +41,7 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
       else next.add(id);
       return next;
     });
-    if (!selectedIds.has(id)) setLastSelectedId(id);
-    else setLastSelectedId(null);
-  }, [selectedIds]);
+  }, []);
 
   const deleteSelected = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -108,12 +105,7 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
         </section>
       </aside>
       <div className="min-w-0 flex-1">
-        <MapView
-          baseUrl={baseUrl}
-          files={selectedFiles}
-          lastSelectedId={lastSelectedId}
-          className="h-full"
-        />
+        <MapView baseUrl={baseUrl} files={selectedFiles} className="h-full" />
       </div>
     </div>
   );
