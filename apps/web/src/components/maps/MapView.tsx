@@ -19,8 +19,12 @@ type LeafletPolyline = import("leaflet").Polyline;
 
 type SelectedTrack = { fileId: string; trackIndex: number };
 
+const VISIBLE_WEIGHT = 3;
+const SELECTED_WEIGHT = 6;
+
 type TrackLayerRef = {
   poly: LeafletPolyline;
+  hitPoly: LeafletPolyline; // invisible, 2× width, receives clicks
   fileId: string;
   trackIndex: number;
   name: string;
@@ -135,16 +139,24 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
           tracks.forEach((track, trackIndex) => {
             if (track.points.length < 2) return;
             const latlngs = track.points.map(([lat, lng]) => L.latLng(lat, lng));
-            const poly = L.polyline(latlngs, { color, weight: 3 });
-            poly.bindPopup(track.name);
-            poly.on("click", (e) => {
+            const poly = L.polyline(latlngs, { color, weight: VISIBLE_WEIGHT });
+            const hitPoly = L.polyline(latlngs, {
+              color,
+              weight: VISIBLE_WEIGHT * 2,
+              opacity: 0,
+              interactive: true,
+            });
+            hitPoly.bindPopup(track.name);
+            hitPoly.on("click", (e) => {
               L.DomEvent.stopPropagation(e);
               setSelectedTrack({ fileId: rec.id, trackIndex });
-              poly.openPopup();
+              hitPoly.openPopup();
             });
             layersRef.current?.addLayer(poly);
+            layersRef.current?.addLayer(hitPoly);
             trackLayersRef.current.push({
               poly,
+              hitPoly,
               fileId: rec.id,
               trackIndex,
               name: track.name,
@@ -166,9 +178,11 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
     for (const ref of trackLayersRef.current) {
       const isSelected =
         selectedTrack?.fileId === ref.fileId && selectedTrack?.trackIndex === ref.trackIndex;
-      ref.poly.setStyle({ weight: isSelected ? 6 : 3 });
-      if (isSelected) ref.poly.openPopup();
-      else ref.poly.closePopup();
+      const visibleWeight = isSelected ? SELECTED_WEIGHT : VISIBLE_WEIGHT;
+      ref.poly.setStyle({ weight: visibleWeight });
+      ref.hitPoly.setStyle({ weight: visibleWeight * 2 });
+      if (isSelected) ref.hitPoly.openPopup();
+      else ref.hitPoly.closePopup();
     }
   }, [selectedTrack]);
 
