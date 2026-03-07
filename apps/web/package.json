@@ -9,12 +9,20 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@tmcw/togeojson": "^7.1.2",
+    "@turf/bbox": "^7.3.4",
+    "@turf/boolean-intersects": "^7.3.4",
+    "@turf/helpers": "^7.3.4",
+    "@xmldom/xmldom": "^0.8.11",
     "date-fns": "^4.1.0",
+    "geotiff": "^3.0.4",
     "leaflet": "^1.9.4",
     "next": "^16.1.0",
     "pocketbase": "^0.26.0",
+    "proj4": "^2.20.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-leaflet": "^5.0.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {

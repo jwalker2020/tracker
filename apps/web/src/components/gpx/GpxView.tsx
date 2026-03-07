@@ -2,10 +2,11 @@
 
 import { useCallback, useState } from "react";
 import dynamic from "next/dynamic";
-import type { GpxFileRecord } from "@/lib/gpx-files";
+import type { GpxFileRecord } from "@/lib/gpx";
 import pb from "@/lib/pocketbase";
 import { GpxUploadForm } from "./GpxUploadForm";
 import { GpxFileList } from "./GpxFileList";
+import { GpxLegend } from "./GpxLegend";
 
 const MapView = dynamic(() => import("@/components/maps/MapView").then((m) => ({ default: m.MapView })), {
   ssr: false,
@@ -14,24 +15,35 @@ const MapView = dynamic(() => import("@/components/maps/MapView").then((m) => ({
 type GpxViewProps = {
   initialFiles: GpxFileRecord[];
   baseUrl: string;
+  initialError?: string;
 };
 
 const COLLECTION = "gpx_files";
 
-export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
+export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
   const [files, setFiles] = useState<GpxFileRecord[]>(initialFiles);
   const [orderedFileIds, setOrderedFileIds] = useState<string[]>(() =>
     initialFiles.map((f) => f.id)
   );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [refetching, setRefetching] = useState(false);
+  const [error, setError] = useState<string | undefined>(initialError);
 
   const refetch = useCallback(async () => {
-    const res = await fetch("/api/gpx/files");
-    if (!res.ok) return;
-    const list = (await res.json()) as GpxFileRecord[];
-    setFiles(list);
-    setOrderedFileIds(list.map((f) => f.id));
+    setError(undefined);
+    setRefetching(true);
+    try {
+      const res = await fetch("/api/gpx/files");
+      if (!res.ok) throw new Error("Failed to fetch");
+      const list = (await res.json()) as GpxFileRecord[];
+      setFiles(list);
+      setOrderedFileIds(list.map((f) => f.id));
+    } catch {
+      setError("Could not load GPX files.");
+    } finally {
+      setRefetching(false);
+    }
   }, []);
 
   const onToggle = useCallback((id: string) => {
@@ -81,6 +93,14 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
   return (
     <div className="flex h-[calc(100vh-2rem)] gap-4 overflow-hidden">
       <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+        {error ? (
+          <div className="rounded border border-amber-800/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
+            {error}
+          </div>
+        ) : null}
+        {refetching ? (
+          <p className="text-xs text-slate-400">Loading…</p>
+        ) : null}
         <section>
           <h2 className="mb-3 text-sm font-semibold text-slate-100">Upload GPX</h2>
           <GpxUploadForm onUploadSuccess={refetch} />
@@ -94,6 +114,27 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
           </button>
         </section>
         <section>
+          <h2 className="mb-3 text-sm font-semibold text-slate-100">Selection</h2>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              disabled={selectedIds.size === 0}
+              className="rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-50"
+            >
+              Clear selection
+            </button>
+            <button
+              type="button"
+              title="Fit map to selected tracks (placeholder)"
+              className="rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-50"
+              disabled={selectedIds.size === 0}
+            >
+              Fit to selection
+            </button>
+          </div>
+        </section>
+        <section>
           <h2 className="mb-3 text-sm font-semibold text-slate-100">Files</h2>
           <GpxFileList
             files={files}
@@ -103,6 +144,7 @@ export function GpxView({ initialFiles, baseUrl }: GpxViewProps) {
             onReorder={onReorder}
           />
         </section>
+        <GpxLegend />
       </aside>
       <div className="min-w-0 flex-1">
         <MapView baseUrl={baseUrl} files={selectedFiles} className="h-full" />

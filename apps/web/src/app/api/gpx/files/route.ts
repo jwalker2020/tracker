@@ -1,4 +1,4 @@
-import { getGpxFilesList } from "@/lib/gpx-files";
+import { getGpxFilesList } from "@/lib/gpx";
 import { NextResponse } from "next/server";
 
 export async function GET() {

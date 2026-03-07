@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import type { GpxFileRecord } from "@/lib/gpx-files";
+import type { GpxFileRecord } from "@/lib/gpx";
 
 type GpxFileListProps = {
   files: GpxFileRecord[];

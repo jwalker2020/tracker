@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { parseGpx, boundsToJson } from "@/lib/gpx-parse";
+import { parseGpx, boundsToJson } from "@/lib/gpx";
 import pb from "@/lib/pocketbase";
 
 const DEFAULT_COLORS = [
