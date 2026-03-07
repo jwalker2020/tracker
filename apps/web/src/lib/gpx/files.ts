@@ -11,6 +11,13 @@ export type GpxFileRecord = {
   trackCount: number;
   pointCount: number;
   color: string;
+  distanceM?: number;
+  minElevationM?: number;
+  maxElevationM?: number;
+  totalAscentM?: number;
+  totalDescentM?: number;
+  averageGradePct?: number;
+  enrichedGeoJson?: string;
   sortOrder?: number;
   created: string;
   updated: string;

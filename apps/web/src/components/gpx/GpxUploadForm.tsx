@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { parseGpx, boundsToJson } from "@/lib/gpx";
+import { useState, useEffect } from "react";
+import { enrichGpx, boundsToJson, gpxUploadSchema, isGpxFileName } from "@/lib/gpx";
 import pb from "@/lib/pocketbase";
 
 const DEFAULT_COLORS = [
@@ -9,6 +9,7 @@ const DEFAULT_COLORS = [
   "#f97316", "#06b6d4", "#ec4899", "#84cc16",
 ];
 const UPLOAD_TIMEOUT_MS = 30_000;
+const SUCCESS_MESSAGE_DURATION_MS = 2_000;
 
 type GpxUploadFormProps = {
   onUploadSuccess: () => void;
@@ -50,27 +51,48 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
   const [color, setColor] = useState(DEFAULT_COLORS[0]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    if (!success) return;
+    const t = setTimeout(() => {
+      setSuccess(false);
+    }, SUCCESS_MESSAGE_DURATION_MS);
+    return () => clearTimeout(t);
+  }, [success]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
-    const form = e.currentTarget;
-    const fileInput = form.querySelector<HTMLInputElement>('input[type="file"]');
+
+    const fileInput = e.currentTarget.querySelector<HTMLInputElement>('input[type="file"]');
     const file = fileInput?.files?.[0];
     if (!file) {
       setError("Select a GPX file.");
       return;
     }
-    if (!file.name.toLowerCase().endsWith(".gpx")) {
-      setError("File must be a .gpx file.");
+    if (!isGpxFileName(file.name)) {
+      setError("Only .gpx files are accepted.");
+      return;
+    }
+
+    const parsed = gpxUploadSchema.safeParse({
+      name: name.trim() || undefined,
+      color,
+    });
+    if (!parsed.success) {
+      const first = parsed.error.flatten().fieldErrors.color?.[0]
+        ?? parsed.error.flatten().fieldErrors.name?.[0]
+        ?? parsed.error.message;
+      setError(first ?? "Invalid input.");
       return;
     }
 
     setUploading(true);
     try {
       const gpxText = await file.text();
-      const parsed = parseGpx(gpxText);
-      if (parsed.pointCount === 0) {
+      const enriched = enrichGpx(gpxText);
+      if (enriched.pointCount === 0) {
         setError("No track or route points found in the GPX file.");
         setUploading(false);
         return;
@@ -78,18 +100,26 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
 
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("name", name.trim() || file.name.replace(/\.gpx$/i, ""));
-      formData.append("boundsJson", boundsToJson(parsed.bounds));
-      formData.append("centerLat", String(parsed.centerLat));
-      formData.append("centerLng", String(parsed.centerLng));
-      formData.append("trackCount", String(parsed.trackCount));
-      formData.append("pointCount", String(parsed.pointCount));
-      formData.append("color", color);
+      formData.append("name", parsed.data.name ?? file.name.replace(/\.gpx$/i, ""));
+      formData.append("boundsJson", boundsToJson(enriched.bounds));
+      formData.append("centerLat", String(enriched.centerLat));
+      formData.append("centerLng", String(enriched.centerLng));
+      formData.append("trackCount", String(enriched.trackCount));
+      formData.append("pointCount", String(enriched.pointCount));
+      formData.append("color", parsed.data.color);
+      formData.append("distanceM", String(enriched.distanceM));
+      formData.append("minElevationM", String(enriched.minElevationM));
+      formData.append("maxElevationM", String(enriched.maxElevationM));
+      formData.append("totalAscentM", String(enriched.totalAscentM));
+      formData.append("totalDescentM", String(enriched.totalDescentM));
+      formData.append("averageGradePct", String(enriched.averageGradePct));
+      formData.append("enrichedGeoJson", enriched.enrichedGeoJson);
 
       await withTimeout(pb.collection("gpx_files").create(formData), UPLOAD_TIMEOUT_MS);
-      form.reset();
+      e.currentTarget.reset();
       setName("");
       setColor(DEFAULT_COLORS[0]);
+      setSuccess(true);
       onUploadSuccess();
     } catch (err) {
       setError(getErrorMessage(err));
@@ -143,7 +173,10 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
         </div>
       </div>
       {error ? (
-        <p className="text-xs text-red-400">{error}</p>
+        <p className="text-xs text-red-400" role="alert">{error}</p>
+      ) : null}
+      {success ? (
+        <p className="text-xs text-green-400" role="status">Uploaded!</p>
       ) : null}
       <button
         type="submit"

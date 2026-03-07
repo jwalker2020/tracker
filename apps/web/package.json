@@ -12,7 +12,9 @@
     "@tmcw/togeojson": "^7.1.2",
     "@turf/bbox": "^7.3.4",
     "@turf/boolean-intersects": "^7.3.4",
+    "@turf/center": "^7.3.4",
     "@turf/helpers": "^7.3.4",
+    "@turf/length": "^7.3.4",
     "@xmldom/xmldom": "^0.8.11",
     "date-fns": "^4.1.0",
     "geotiff": "^3.0.4",
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
+    "@types/geojson": "^7946.0.16",
     "@types/leaflet": "^1.9.8",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",

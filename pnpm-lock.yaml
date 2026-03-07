@@ -26,7 +26,13 @@ importers:
       '@turf/boolean-intersects':
         specifier: ^7.3.4
         version: 7.3.4
+      '@turf/center':
+        specifier: ^7.3.4
+        version: 7.3.4
       '@turf/helpers':
+        specifier: ^7.3.4
+        version: 7.3.4
+      '@turf/length':
         specifier: ^7.3.4
         version: 7.3.4
       '@xmldom/xmldom':
@@ -66,6 +72,9 @@ importers:
       '@tailwindcss/postcss':
         specifier: ^4.0.0
         version: 4.2.1
+      '@types/geojson':
+        specifier: ^7946.0.16
+        version: 7946.0.16
       '@types/leaflet':
         specifier: ^1.9.8
         version: 1.9.21
@@ -438,11 +447,20 @@ packages:
   '@turf/boolean-point-in-polygon@7.3.4':
     resolution: {integrity: sha512-v/4hfyY90Vz9cDgs2GwjQf+Lft8o7mNCLJOTz/iv8SHAIgMMX0czEoIaNVOJr7tBqPqwin1CGwsncrkf5C9n8Q==}
 
+  '@turf/center@7.3.4':
+    resolution: {integrity: sha512-4SsLMDHWthXbyIHsczgFCo4fx+8tC8w2+B5HdEuY+P+cSOOL4T+6QQzd7WWjuN/Y3ndowFssUmwRrvXuwVRxQA==}
+
+  '@turf/distance@7.3.4':
+    resolution: {integrity: sha512-9drWgd46uHPPyzgrcRQLgSvdS/SjVlQ6ZIBoRQagS5P2kSjUbcOXHIMeOSPwfxwlKhEtobLyr+IiR2ns1TfF8w==}
+
   '@turf/helpers@7.3.4':
     resolution: {integrity: sha512-U/S5qyqgx3WTvg4twaH0WxF3EixoTCfDsmk98g1E3/5e2YKp7JKYZdz0vivsS5/UZLJeZDEElOSFH4pUgp+l7g==}
 
   '@turf/invariant@7.3.4':
     resolution: {integrity: sha512-88Eo4va4rce9sNZs6XiMJowWkikM3cS2TBhaCKlU+GFHdNf8PFEpiU42VDU8q5tOF6/fu21Rvlke5odgOGW4AQ==}
+
+  '@turf/length@7.3.4':
+    resolution: {integrity: sha512-Dg1GnQ/B2go5NIWXt91N4L7XTjIgIWCftBSYIXkrpIM7QGjItzglek0Z5caytvb8ZRWXzZOGs8//+Q5we91WuQ==}
 
   '@turf/line-intersect@7.3.4':
     resolution: {integrity: sha512-XygbTvHa6A+v6l2ZKYtS8AAWxwmrPxKxfBbdH75uED1JvdytSLWYTKGlcU3soxd9sYb4x/g9sDvRIVyU6Lucrg==}
@@ -1006,6 +1024,20 @@ snapshots:
       point-in-polygon-hao: 1.2.4
       tslib: 2.8.1
 
+  '@turf/center@7.3.4':
+    dependencies:
+      '@turf/bbox': 7.3.4
+      '@turf/helpers': 7.3.4
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+
+  '@turf/distance@7.3.4':
+    dependencies:
+      '@turf/helpers': 7.3.4
+      '@turf/invariant': 7.3.4
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+
   '@turf/helpers@7.3.4':
     dependencies:
       '@types/geojson': 7946.0.16
@@ -1014,6 +1046,14 @@ snapshots:
   '@turf/invariant@7.3.4':
     dependencies:
       '@turf/helpers': 7.3.4
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+
+  '@turf/length@7.3.4':
+    dependencies:
+      '@turf/distance': 7.3.4
+      '@turf/helpers': 7.3.4
+      '@turf/meta': 7.3.4
       '@types/geojson': 7946.0.16
       tslib: 2.8.1
 
