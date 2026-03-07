@@ -14,10 +14,17 @@ export type DemEnrichmentConfig = {
   manifestPath?: string;
 };
 
+/** Lightweight profile: cumulative distance (m) and elevation (m) per point. */
+export type ElevationProfilePoint = { d: number; e: number };
+
 export type ElevationEnrichmentResult = {
   stats: ElevationStats;
+  /** Total horizontal distance in meters (from Turf length). */
+  distanceM: number;
   /** Elevation per point (null if nodata/out of extent). */
   elevations: ReadonlyArray<number | null>;
+  /** Optional profile for persistence: [{ d: distanceM, e: elevationM }, ...]. */
+  profile?: ElevationProfilePoint[];
 };
 
 /**
@@ -54,16 +61,22 @@ export async function enrichGpxWithDemFromIndex(
         validCount: 0,
         totalCount: 0,
       },
+      distanceM: 0,
       elevations: [],
     };
   }
+
+  const line = lineString(
+    points.map(([lat, lng]) => [lng, lat])
+  );
+  const distanceM = length(line, { units: "meters" });
 
   const bbox = boundsToWgs84Bbox(bounds);
   const tiles = findIntersectingTiles(index.tiles, bbox);
   if (tiles.length === 0) {
     const elevations: (number | null)[] = points.map(() => null);
-    const stats = computeElevationStatsWithDistance(elevations, 0);
-    return { stats, elevations };
+    const stats = computeElevationStatsWithDistance(elevations, distanceM);
+    return { stats, distanceM, elevations };
   }
 
   const sampler = new DemRasterSampler(index.basePath);
@@ -88,14 +101,19 @@ export async function enrichGpxWithDemFromIndex(
 
   sampler.closeAll();
 
-  const line = lineString(
-    points.map(([lat, lng]) => [lng, lat])
-  );
-  const horizontalDistanceM = length(line, { units: "meters" });
   const stats = computeElevationStatsWithDistance(
     elevations,
-    horizontalDistanceM
+    distanceM
   );
 
-  return { stats, elevations };
+  const profile: ElevationProfilePoint[] = [];
+  let cumDist = 0;
+  const segmentLength = distanceM / Math.max(1, points.length - 1);
+  for (let i = 0; i < points.length; i++) {
+    if (i > 0) cumDist += segmentLength;
+    const e = elevations[i];
+    profile.push({ d: Math.round(cumDist * 10) / 10, e: e != null ? Math.round(e * 10) / 10 : 0 });
+  }
+
+  return { stats, distanceM, elevations, profile };
 }

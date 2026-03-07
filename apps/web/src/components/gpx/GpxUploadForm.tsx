@@ -50,8 +50,10 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(DEFAULT_COLORS[0]);
   const [uploading, setUploading] = useState(false);
+  const [enriching, setEnriching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
 
   useEffect(() => {
     if (!success) return;
@@ -64,6 +66,7 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    setWarning(null);
 
     const fileInput = e.currentTarget.querySelector<HTMLInputElement>('input[type="file"]');
     const file = fileInput?.files?.[0];
@@ -115,12 +118,31 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
       formData.append("averageGradePct", String(enriched.averageGradePct));
       formData.append("enrichedGeoJson", enriched.enrichedGeoJson);
 
-      await withTimeout(pb.collection("gpx_files").create(formData), UPLOAD_TIMEOUT_MS);
+      const record = await withTimeout(
+        pb.collection("gpx_files").create(formData),
+        UPLOAD_TIMEOUT_MS
+      );
       e.currentTarget.reset();
       setName("");
       setColor(DEFAULT_COLORS[0]);
       setSuccess(true);
       onUploadSuccess();
+
+      setEnriching(true);
+      try {
+        const res = await fetch("/api/gpx/enrich", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: record.id }),
+        });
+        const data = (await res.json()) as { ok?: boolean; warning?: string; error?: string };
+        if (data.warning) setWarning(data.warning);
+        if (data.ok !== false && res.ok) onUploadSuccess();
+      } catch {
+        setWarning("Elevation enrichment could not be completed.");
+      } finally {
+        setEnriching(false);
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -177,6 +199,12 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
       ) : null}
       {success ? (
         <p className="text-xs text-green-400" role="status">Uploaded!</p>
+      ) : null}
+      {enriching ? (
+        <p className="text-xs text-slate-400" role="status">Enriching elevation…</p>
+      ) : null}
+      {warning ? (
+        <p className="text-xs text-amber-400" role="status">{warning}</p>
       ) : null}
       <button
         type="submit"

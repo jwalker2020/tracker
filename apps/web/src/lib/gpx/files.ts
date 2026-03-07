@@ -18,6 +18,8 @@ export type GpxFileRecord = {
   totalDescentM?: number;
   averageGradePct?: number;
   enrichedGeoJson?: string;
+  /** Optional JSON array of { d: distanceM, e: elevationM } from DEM enrichment. */
+  elevationProfileJson?: string;
   sortOrder?: number;
   created: string;
   updated: string;
