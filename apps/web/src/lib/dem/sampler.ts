@@ -35,10 +35,11 @@ async function getGeotiff(): Promise<{ fromArrayBuffer: (buffer: ArrayBuffer) =>
 }
 
 /**
- * Check if a value is nodata (same as tile nodata or NaN).
+ * Check if a value is nodata: NaN, ±Infinity, or equals the tile's nodata value.
  */
 function isNoData(value: number, nodata: number | null): boolean {
-  if (Number.isNaN(value)) return true;
+  if (typeof value !== "number") return true;
+  if (!Number.isFinite(value)) return true;
   if (nodata != null && value === nodata) return true;
   return false;
 }
@@ -149,7 +150,7 @@ export class DemRasterSampler {
     if (!band || band.length === 0) return { elevationM: null };
     const value = Number(band[0]);
     if (isNoData(value, nodata)) return { elevationM: null };
-    return { elevationM: value };
+    return { elevationM: Number.isFinite(value) ? value : null };
   }
 
   /**

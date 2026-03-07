@@ -1,15 +1,30 @@
 import type { ElevationStats } from "./types";
 
+/** Elevation value that is valid for stats (finite number). Null = nodata / missing. */
+export type ElevationValue = number | null;
+
+/** Safe division: returns 0 when divisor is not positive finite. */
+function safeDivide(num: number, denom: number): number {
+  if (typeof num !== "number" || typeof denom !== "number") return 0;
+  if (!Number.isFinite(num) || !Number.isFinite(denom)) return 0;
+  if (denom <= 0) return 0;
+  const q = num / denom;
+  return Number.isFinite(q) ? q : 0;
+}
+
+/** True if value is valid elevation (finite number). Excludes null, NaN, ±Infinity. */
+export function isValidElevation(e: ElevationValue): e is number {
+  return e != null && typeof e === "number" && Number.isFinite(e);
+}
+
 /**
  * Compute elevation statistics from a sequence of elevations (meters).
- * Null/NaN values are skipped for min/max; ascent/descent use only consecutive valid pairs.
+ * Nodata (null) and non-finite values are skipped for min/max and ascent/descent.
  */
 export function computeElevationStats(
-  elevations: ReadonlyArray<number | null>
+  elevations: ReadonlyArray<ElevationValue>
 ): ElevationStats {
-  const valid = elevations.filter(
-    (e): e is number => e != null && !Number.isNaN(e)
-  );
+  const valid = elevations.filter(isValidElevation);
   const totalCount = elevations.length;
   const validCount = valid.length;
 
@@ -27,36 +42,30 @@ export function computeElevationStats(
 
   let min = valid[0]!;
   let max = valid[0]!;
-  let totalAscentM = 0;
-  let totalDescentM = 0;
-
   for (const e of valid) {
     if (e < min) min = e;
     if (e > max) max = e;
   }
 
+  let totalAscentM = 0;
+  let totalDescentM = 0;
   for (let i = 1; i < elevations.length; i++) {
     const prev = elevations[i - 1];
     const curr = elevations[i];
-    if (prev == null || curr == null || Number.isNaN(prev) || Number.isNaN(curr))
-      continue;
+    if (!isValidElevation(prev) || !isValidElevation(curr)) continue;
     const d = curr - prev;
-    if (d > 0) totalAscentM += d;
-    else totalDescentM += -d;
+    if (Number.isFinite(d)) {
+      if (d > 0) totalAscentM += d;
+      else totalDescentM += -d;
+    }
   }
-
-  const horizontalDistanceM = 0; // Caller can pass in if they have it
-  const averageGradePct =
-    horizontalDistanceM > 0
-      ? (totalAscentM / horizontalDistanceM) * 100
-      : 0;
 
   return {
     minElevationM: min,
     maxElevationM: max,
     totalAscentM,
     totalDescentM,
-    averageGradePct,
+    averageGradePct: 0,
     validCount,
     totalCount,
   };
@@ -64,16 +73,16 @@ export function computeElevationStats(
 
 /**
  * Compute elevation stats and average grade using horizontal distance (meters).
- * Use this when you have distance (e.g. from Turf length) for correct grade.
+ * Grade = (totalAscentM / horizontalDistanceM) * 100 when distance > 0; else 0.
  */
 export function computeElevationStatsWithDistance(
-  elevations: ReadonlyArray<number | null>,
+  elevations: ReadonlyArray<ElevationValue>,
   horizontalDistanceM: number
 ): ElevationStats {
   const stats = computeElevationStats(elevations);
-  const averageGradePct =
-    horizontalDistanceM > 0
-      ? (stats.totalAscentM / horizontalDistanceM) * 100
-      : 0;
+  const safeDistance = Number.isFinite(horizontalDistanceM) && horizontalDistanceM > 0
+    ? horizontalDistanceM
+    : 0;
+  const averageGradePct = safeDivide(stats.totalAscentM, safeDistance) * 100;
   return { ...stats, averageGradePct };
 }

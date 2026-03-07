@@ -22,11 +22,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const demBasePath = process.env.DEM_BASE_PATH;
-  if (!demBasePath?.trim()) {
+  const demBasePath = process.env.DEM_BASE_PATH?.trim();
+  if (!demBasePath) {
     return NextResponse.json({
       ok: true,
-      warning: "Elevation enrichment skipped (DEM_BASE_PATH not set).",
+      warning: "Elevation enrichment skipped. Set DEM_BASE_PATH to enable DEM elevation.",
     });
   }
 
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   if (!baseUrl) {
     return NextResponse.json({
       ok: true,
-      warning: "Elevation enrichment skipped (NEXT_PUBLIC_PB_URL not set).",
+      warning: "Elevation enrichment skipped. NEXT_PUBLIC_PB_URL is not set.",
     });
   }
 
@@ -59,14 +59,14 @@ export async function POST(request: Request) {
     console.error("[gpx/enrich] fetch file", err);
     return NextResponse.json({
       ok: true,
-      warning: "Could not load GPX file for elevation enrichment.",
+      warning: "Could not load GPX file from storage. Elevation was not enriched.",
     });
   }
 
   let result;
   try {
     result = await enrichGpxWithDem(gpxText, {
-      demBasePath: demBasePath.trim(),
+      demBasePath,
       manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
     });
   } catch (err) {
@@ -74,11 +74,18 @@ export async function POST(request: Request) {
     console.error("[gpx/enrich] DEM pipeline", err);
     return NextResponse.json({
       ok: true,
-      warning: `Elevation enrichment failed: ${message}`,
+      warning: `Elevation enrichment failed. ${message}`,
     });
   }
 
   const { stats, distanceM, profile } = result;
+  if (stats.validCount === 0) {
+    return NextResponse.json({
+      ok: true,
+      warning: "No elevation data from DEM for this track (no intersecting tiles or all nodata).",
+    });
+  }
+
   const update: Record<string, unknown> = {
     minElevationM: stats.minElevationM,
     maxElevationM: stats.maxElevationM,
@@ -97,7 +104,7 @@ export async function POST(request: Request) {
     console.error("[gpx/enrich] update record", err);
     return NextResponse.json({
       ok: true,
-      warning: "Elevation computed but could not save to record.",
+      warning: "Elevation was computed but could not be saved to the record.",
     });
   }
 

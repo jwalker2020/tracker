@@ -201,10 +201,14 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
         <p className="text-xs text-green-400" role="status">Uploaded!</p>
       ) : null}
       {enriching ? (
-        <p className="text-xs text-slate-400" role="status">Enriching elevation…</p>
+        <p className="text-xs text-slate-400" role="status" aria-live="polite">
+          Enriching elevation from DEM…
+        </p>
       ) : null}
       {warning ? (
-        <p className="text-xs text-amber-400" role="status">{warning}</p>
+        <p className="text-xs text-amber-400" role="status" aria-live="polite">
+          {warning}
+        </p>
       ) : null}
       <button
         type="submit"
