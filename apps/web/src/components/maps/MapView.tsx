@@ -15,14 +15,26 @@ type MapViewProps = {
 
 type LeafletMap = import("leaflet").Map & { setBase?: (w: "osm" | "usgs") => void };
 type LeafletLayerGroup = import("leaflet").LayerGroup;
+type LeafletPolyline = import("leaflet").Polyline;
+
+type SelectedTrack = { fileId: string; trackIndex: number };
+
+type TrackLayerRef = {
+  poly: LeafletPolyline;
+  fileId: string;
+  trackIndex: number;
+  name: string;
+};
 
 export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const layersRef = useRef<LeafletLayerGroup | null>(null);
   const LRef = useRef<typeof import("leaflet") | null>(null);
+  const trackLayersRef = useRef<TrackLayerRef[]>([]);
   const [basemap, setBasemap] = useState<"osm" | "usgs">("osm");
   const [ready, setReady] = useState(false);
+  const [selectedTrack, setSelectedTrack] = useState<SelectedTrack | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined" || !containerRef.current) return;
@@ -94,10 +106,19 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
 
   useEffect(() => {
     if (!ready || !mapRef.current || !layersRef.current || !LRef.current) return;
+    const map = mapRef.current;
     const L = LRef.current;
     layersRef.current.clearLayers();
+    trackLayersRef.current = [];
 
-    if (files.length === 0) return;
+    const onMapClick = () => setSelectedTrack(null);
+    map.on("click", onMapClick);
+
+    if (files.length === 0) {
+      return () => {
+        map.off("click", onMapClick);
+      };
+    }
 
     // Draw tracks in list order: first file at bottom (back), last file on top (front)
     let cancelled = false;
@@ -111,12 +132,24 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
           const gpxText = await res.text();
           if (cancelled || !layersRef.current) return;
           const { tracks } = parseGpx(gpxText);
-          for (const points of tracks) {
-            if (points.length < 2) continue;
-            const latlngs = points.map(([lat, lng]) => L.latLng(lat, lng));
+          tracks.forEach((track, trackIndex) => {
+            if (track.points.length < 2) return;
+            const latlngs = track.points.map(([lat, lng]) => L.latLng(lat, lng));
             const poly = L.polyline(latlngs, { color, weight: 3 });
+            poly.bindPopup(track.name);
+            poly.on("click", (e) => {
+              L.DomEvent.stopPropagation(e);
+              setSelectedTrack({ fileId: rec.id, trackIndex });
+              poly.openPopup();
+            });
             layersRef.current?.addLayer(poly);
-          }
+            trackLayersRef.current.push({
+              poly,
+              fileId: rec.id,
+              trackIndex,
+              name: track.name,
+            });
+          });
         } catch {
           // skip failed fetch
         }
@@ -124,8 +157,20 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
     })();
     return () => {
       cancelled = true;
+      map.off("click", onMapClick);
     };
   }, [ready, baseUrl, files]);
+
+  // When selection changes, update line weights and popup visibility
+  useEffect(() => {
+    for (const ref of trackLayersRef.current) {
+      const isSelected =
+        selectedTrack?.fileId === ref.fileId && selectedTrack?.trackIndex === ref.trackIndex;
+      ref.poly.setStyle({ weight: isSelected ? 6 : 3 });
+      if (isSelected) ref.poly.openPopup();
+      else ref.poly.closePopup();
+    }
+  }, [selectedTrack]);
 
   return (
     <div className={`relative h-full w-full overflow-visible ${className}`}>
