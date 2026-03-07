@@ -1,3 +1,4 @@
+import { fromArrayBuffer } from "geotiff";
 import proj4 from "proj4";
 import type { DemTileMeta, ElevationSample } from "./types";
 
@@ -24,15 +25,6 @@ type OpenTile = {
   height: number;
   nodata: number | null;
 };
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let geotiffModule: any = null;
-
-async function getGeotiff(): Promise<{ fromArrayBuffer: (buffer: ArrayBuffer) => Promise<{ getImage: (i?: number) => Promise<GeoTIFFImage> }> }> {
-  if (!geotiffModule) geotiffModule = await import("geotiff");
-  const mod = geotiffModule?.default ?? geotiffModule;
-  return mod;
-}
 
 /**
  * Check if a value is nodata: NaN, ±Infinity, or equals the tile's nodata value.
@@ -64,23 +56,27 @@ export class DemRasterSampler {
     const cached = this.openTiles.get(path);
     if (cached) return cached;
 
-    const GeoTIFF = await getGeotiff();
     const fs = await import("node:fs/promises");
     const pathMod = await import("node:path");
 
     const fullPath = pathMod.isAbsolute(meta.path) ? meta.path : pathMod.join(this.basePath, meta.path);
     let buffer: ArrayBuffer;
     try {
-      buffer = (await fs.readFile(fullPath)).buffer as ArrayBuffer;
-    } catch {
+      const nodeBuffer = await fs.readFile(fullPath);
+      buffer = nodeBuffer.buffer.slice(
+        nodeBuffer.byteOffset,
+        nodeBuffer.byteOffset + nodeBuffer.byteLength
+      ) as ArrayBuffer;
+    } catch (err) {
+      console.warn("[DEM] Could not read tile file:", fullPath, err instanceof Error ? err.message : String(err));
       return null;
     }
 
     let geotiff: { getImage: (index?: number) => Promise<GeoTIFFImage> };
     try {
-      const GeoTIFF = await getGeotiff();
-      geotiff = await GeoTIFF.fromArrayBuffer(buffer);
-    } catch {
+      geotiff = await fromArrayBuffer(buffer);
+    } catch (err) {
+      console.warn("[DEM] Could not parse GeoTIFF:", fullPath, err instanceof Error ? err.message : String(err));
       return null;
     }
 

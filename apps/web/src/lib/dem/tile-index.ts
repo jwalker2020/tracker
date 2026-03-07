@@ -39,8 +39,9 @@ export async function loadTileIndexFromManifest(
   for (const t of data.tiles) {
     if (!isTileMeta(t)) continue;
     const bbox = normalizeBbox(t.bbox);
+    const path = normalizeTilePath(t.path);
     tiles.push({
-      path: t.path,
+      path,
       bbox,
       crs: String(t.crs ?? "EPSG:4326"),
       nodata: t.nodata != null ? Number(t.nodata) : undefined,
@@ -48,6 +49,20 @@ export async function loadTileIndexFromManifest(
   }
 
   return { tiles, basePath: demBasePath };
+}
+
+/** If path is a URL, use the filename only so we can find the file under demBasePath. */
+function normalizeTilePath(p: string): string {
+  const s = p.trim();
+  if (s.startsWith("http://") || s.startsWith("https://")) {
+    try {
+      const segs = new URL(s).pathname.split("/").filter(Boolean);
+      return segs[segs.length - 1] ?? s;
+    } catch {
+      return s;
+    }
+  }
+  return s;
 }
 
 function isTileMeta(t: unknown): t is Record<string, unknown> & { path: string; bbox: unknown; crs?: string } {

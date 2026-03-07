@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { enrichGpx, boundsToJson, gpxUploadSchema, isGpxFileName } from "@/lib/gpx";
 import pb from "@/lib/pocketbase";
+import { EnrichmentProgress } from "./EnrichmentProgress";
 
 const DEFAULT_COLORS = [
   "#3b82f6", "#22c55e", "#eab308", "#ef4444", "#8b5cf6",
@@ -10,6 +11,7 @@ const DEFAULT_COLORS = [
 ];
 const UPLOAD_TIMEOUT_MS = 30_000;
 const SUCCESS_MESSAGE_DURATION_MS = 2_000;
+const ENRICHMENT_JOB_KEY = "gpx_enrichment_job_id";
 
 type GpxUploadFormProps = {
   onUploadSuccess: () => void;
@@ -50,10 +52,15 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(DEFAULT_COLORS[0]);
   const [uploading, setUploading] = useState(false);
-  const [enriching, setEnriching] = useState(false);
+  const [enrichmentJobId, setEnrichmentJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem(ENRICHMENT_JOB_KEY);
+    if (stored) setEnrichmentJobId(stored);
+  }, []);
 
   useEffect(() => {
     if (!success) return;
@@ -129,20 +136,21 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
       setSuccess(true);
       onUploadSuccess();
 
-      setEnriching(true);
       try {
         const res = await fetch("/api/gpx/enrich", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: record.id }),
+          body: JSON.stringify({ id: record.id, async: true }),
         });
-        const data = (await res.json()) as { ok?: boolean; skipped?: boolean; warning?: string; error?: string };
-        if (data.warning && !data.skipped) setWarning(data.warning);
-        if (data.ok !== false && res.ok) onUploadSuccess();
+        const data = (await res.json()) as { ok?: boolean; skipped?: boolean; warning?: string; error?: string; jobId?: string };
+        if (data.skipped && data.warning) setWarning(data.warning);
+        if (data.jobId) {
+          sessionStorage.setItem(ENRICHMENT_JOB_KEY, data.jobId);
+          setEnrichmentJobId(data.jobId);
+        }
+        if (data.ok === false || (!data.jobId && data.warning && !data.skipped)) setWarning(data.warning ?? "Enrichment could not be started.");
       } catch {
-        setWarning("Elevation enrichment could not be completed.");
-      } finally {
-        setEnriching(false);
+        setWarning("Elevation enrichment could not be started.");
       }
     } catch (err) {
       setError(getErrorMessage(err));
@@ -201,10 +209,20 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
       {success ? (
         <p className="text-xs text-green-400" role="status">Uploaded!</p>
       ) : null}
-      {enriching ? (
-        <p className="text-xs text-slate-400" role="status" aria-live="polite">
-          Enriching elevation from DEM…
-        </p>
+      {enrichmentJobId ? (
+        <EnrichmentProgress
+          jobId={enrichmentJobId}
+          onComplete={() => {
+            sessionStorage.removeItem(ENRICHMENT_JOB_KEY);
+            setEnrichmentJobId(null);
+            onUploadSuccess();
+          }}
+          onError={(message) => {
+            sessionStorage.removeItem(ENRICHMENT_JOB_KEY);
+            setWarning(message);
+            setEnrichmentJobId(null);
+          }}
+        />
       ) : null}
       {warning ? (
         <p className="text-xs text-amber-400" role="status" aria-live="polite">

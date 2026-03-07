@@ -9,6 +9,9 @@
   "scripts": {
     "dev": "pnpm -C apps/web dev",
     "build": "pnpm --filter web build",
-    "lint": "pnpm --filter web lint"
+    "lint": "pnpm --filter web lint",
+    "dem:manifest": "pnpm -C tools/dem run manifest",
+    "dem:download": "pnpm -C tools/dem run download",
+    "dem:setup:nh": "pnpm -C tools/dem run setup-nh"
   }
 }

@@ -1,0 +1,26 @@
+{
+  "name": "dem-prep",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "manifest": "tsx src/cli.ts manifest",
+    "download": "tsx src/cli.ts download",
+    "setup-nh": "tsx src/cli.ts setup-nh",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "geotiff": "^3.0.4",
+    "geotiff-geokeys-to-proj4": "^2024.4.13",
+    "proj4": "^2.20.4",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.0.0"
+  },
+  "bin": {
+    "dem-prep": "./src/cli.js"
+  }
+}

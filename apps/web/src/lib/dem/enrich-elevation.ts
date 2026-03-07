@@ -25,11 +25,19 @@ const EMPTY_RESULT: ElevationEnrichmentResult = {
   elevations: [],
 };
 
+export type DemEnrichmentProgressCallback = (data: {
+  processedPoints: number;
+  totalPoints: number;
+  percentComplete: number;
+}) => void;
+
 export type DemEnrichmentConfig = {
   /** Path to folder containing DEM tiles (and manifest). */
   demBasePath: string;
   /** Optional path to manifest (default manifest.json). */
   manifestPath?: string;
+  /** Optional progress callback during sampling (processedPoints, totalPoints, percentComplete). */
+  onProgress?: DemEnrichmentProgressCallback;
 };
 
 /** Lightweight profile: cumulative distance (m) and elevation (m) per point. */
@@ -43,17 +51,27 @@ export type ElevationEnrichmentResult = {
   elevations: ReadonlyArray<number | null>;
   /** Optional profile for persistence. */
   profile?: ElevationProfilePoint[];
+  /** Set when validCount is 0 so API can return a specific reason. */
+  elevationHint?: "no_intersecting_tiles" | "no_open_tiles" | "all_nodata";
 };
+
+const YIELD_EVERY_N_POINTS = 200;
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
 
 /**
  * Resample line to points at fixed spacing (meters). Returns [lat, lng][].
  * If length is 0 or spacing is 0, returns the line's first and last point if distinct.
+ * Optional onProgress(processed, estimatedTotal) is called periodically and yields to the event loop.
  */
-function resampleLineToFixedSpacing(
+async function resampleLineToFixedSpacing(
   lineFeature: ReturnType<typeof lineString>,
   totalLengthM: number,
-  spacingM: number
-): Array<[number, number]> {
+  spacingM: number,
+  onProgress?: (processed: number, estimatedTotal: number) => void | Promise<void>
+): Promise<Array<[number, number]>> {
   const coords = lineFeature.geometry.coordinates;
   if (!coords || coords.length === 0) return [];
   if (coords.length === 1) {
@@ -68,12 +86,17 @@ function resampleLineToFixedSpacing(
     return [[lat, lng]];
   }
 
+  const estimatedTotal = Math.max(1, Math.ceil(safeLength / safeSpacing) + 1);
   const out: Array<[number, number]> = [];
   for (let d = 0; d <= safeLength; d += safeSpacing) {
     const pt = along(lineFeature, d, { units: "meters" });
     const [lng, lat] = pt.geometry.coordinates;
     if (Number.isFinite(lng) && Number.isFinite(lat)) {
       out.push([lat, lng]);
+      if (onProgress && out.length % YIELD_EVERY_N_POINTS === 0) {
+        await onProgress(out.length, estimatedTotal);
+        await yieldToEventLoop();
+      }
     }
   }
   const last = coords[coords.length - 1]!;
@@ -97,7 +120,7 @@ export async function enrichGpxWithDem(
     demBasePath: config.demBasePath,
     manifestPath: config.manifestPath,
   });
-  return enrichGpxWithDemFromIndex(gpxText, index);
+  return enrichGpxWithDemFromIndex(gpxText, index, config.onProgress);
 }
 
 /**
@@ -105,7 +128,8 @@ export async function enrichGpxWithDem(
  */
 export async function enrichGpxWithDemFromIndex(
   gpxText: string,
-  index: DemTileIndex
+  index: DemTileIndex,
+  onProgress?: DemEnrichmentProgressCallback
 ): Promise<ElevationEnrichmentResult> {
   const { points, bounds } = extractPointsAndBounds(gpxText);
   if (points.length === 0) {
@@ -122,9 +146,16 @@ export async function enrichGpxWithDemFromIndex(
   const tiles = findIntersectingTiles(index.tiles, bbox);
 
   if (tiles.length === 0) {
+    console.warn(
+      "[DEM] No tiles intersect GPX bbox [west,south,east,north]:",
+      bbox.map((n) => Number(n).toFixed(4)),
+      "| Index has",
+      index.tiles.length,
+      "tiles. Is the track inside your DEM coverage (e.g. New Hampshire)?"
+    );
     const elevations: (number | null)[] = points.map(() => null);
     const stats = computeElevationStatsWithDistance(elevations, safeDistanceM);
-    return { stats, distanceM: safeDistanceM, elevations };
+    return { stats, distanceM: safeDistanceM, elevations, elevationHint: "no_intersecting_tiles" as const };
   }
 
   const sampler = new DemRasterSampler(index.basePath);
@@ -135,19 +166,100 @@ export async function enrichGpxWithDemFromIndex(
   }
 
   if (openTiles.length === 0) {
+    const pathMod = await import("node:path");
+    const firstPath = tiles[0]?.path ?? "(no tile)";
+    const resolvedFirst = pathMod.isAbsolute(firstPath)
+      ? firstPath
+      : pathMod.join(index.basePath, firstPath);
+    console.warn(
+      "[DEM] No tile files could be opened for",
+      tiles.length,
+      "intersecting tile(s). DEM_BASE_PATH=",
+      index.basePath || "(empty!)",
+      "| first tile path:",
+      firstPath,
+      "| resolved:",
+      resolvedFirst
+    );
     sampler.closeAll();
     const elevations: (number | null)[] = points.map(() => null);
     const stats = computeElevationStatsWithDistance(elevations, safeDistanceM);
-    return { stats, distanceM: safeDistanceM, elevations };
+    return { stats, distanceM: safeDistanceM, elevations, elevationHint: "no_open_tiles" as const };
+  }
+
+  const estimatedTotal = Math.max(
+    1,
+    safeDistanceM > 0 && points.length > 1
+      ? Math.ceil(safeDistanceM / RESAMPLE_SPACING_M) + 1
+      : points.length
+  );
+  if (onProgress) {
+    onProgress({ processedPoints: 0, totalPoints: estimatedTotal, percentComplete: 0 });
   }
 
   const pointsToSample =
     safeDistanceM > 0 && points.length > 1
-      ? resampleLineToFixedSpacing(line, safeDistanceM, RESAMPLE_SPACING_M)
+      ? await resampleLineToFixedSpacing(line, safeDistanceM, RESAMPLE_SPACING_M, (processed, total) => {
+          if (onProgress) {
+            const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+            onProgress({ processedPoints: processed, totalPoints: total, percentComplete: pct });
+          }
+        })
       : points;
 
+  const totalPoints = pointsToSample.length;
+  const latestProgress = { processedPoints: 0, totalPoints, percentComplete: 0 };
+  const reportProgress = (processed: number): void => {
+    const pct = totalPoints > 0 ? Math.min(100, Math.round((processed / totalPoints) * 100)) : 0;
+    latestProgress.processedPoints = processed;
+    latestProgress.percentComplete = pct;
+    if (onProgress) {
+      onProgress({ processedPoints: processed, totalPoints, percentComplete: pct });
+    }
+  };
+  reportProgress(0);
+
+  const startTimeMs = Date.now();
+  const LOG_INTERVAL_MS = 10_000;
+  const demLog = (msg: string): void => {
+    try {
+      process.stderr.write(`[DEM] ${msg}\n`);
+    } catch {
+      console.warn("[DEM]", msg);
+    }
+  };
+  demLog(`Enrichment started: ${totalPoints.toLocaleString()} points`);
+  const formatHhMmSs = (totalSeconds: number): string => {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  };
+  const logProgress = (): void => {
+    const { processedPoints, totalPoints: total, percentComplete } = latestProgress;
+    const elapsedMs = Date.now() - startTimeMs;
+    const elapsedSec = Math.floor(elapsedMs / 1000);
+    let estimatedRemaining = "";
+    if (processedPoints > 0 && processedPoints < total) {
+      const ratePerSec = processedPoints / (elapsedMs / 1000);
+      const remainingSec = Math.round((total - processedPoints) / ratePerSec);
+      estimatedRemaining = formatHhMmSs(remainingSec);
+    }
+    demLog(
+      "Enrichment progress\n" +
+        `  Processed: ${processedPoints.toLocaleString()} / ${total.toLocaleString()} points (${percentComplete}%)\n` +
+        `  Elapsed: ${formatHhMmSs(elapsedSec)}\n` +
+        (estimatedRemaining ? `  Estimated remaining: ${estimatedRemaining}` : "")
+    );
+  };
+  const progressLogIntervalId = setInterval(logProgress, LOG_INTERVAL_MS);
+  logProgress();
+
   const elevations: (number | null)[] = [];
-  for (const [lat, lng] of pointsToSample) {
+  const progressInterval = Math.max(1, Math.floor(totalPoints / 100));
+  try {
+  for (let i = 0; i < pointsToSample.length; i++) {
+    const [lat, lng] = pointsToSample[i]!;
     let value: number | null = null;
     for (const open of openTiles) {
       const sample = await sampler.sample(open, lng, lat);
@@ -157,11 +269,32 @@ export async function enrichGpxWithDemFromIndex(
       }
     }
     elevations.push(value);
+    if ((i + 1) % progressInterval === 0 || i === pointsToSample.length - 1) {
+      reportProgress(i + 1);
+    }
   }
+  } finally {
+    clearInterval(progressLogIntervalId);
+  }
+
+  demLog(
+    `Enrichment completed: ${totalPoints.toLocaleString()} points in ${formatHhMmSs(Math.floor((Date.now() - startTimeMs) / 1000))}`
+  );
 
   sampler.closeAll();
 
   const stats = computeElevationStatsWithDistance(elevations, safeDistanceM);
+  const hint =
+    stats.validCount === 0
+      ? ("all_nodata" as const)
+      : undefined;
+  if (hint) {
+    console.warn(
+      "[DEM] All",
+      pointsToSample.length,
+      "samples were nodata or out of extent. Check tile CRS and that track is inside tile bounds."
+    );
+  }
 
   const profile: ElevationProfilePoint[] = [];
   const segmentLength = safeDistanceM / Math.max(1, pointsToSample.length - 1);
@@ -180,5 +313,6 @@ export async function enrichGpxWithDemFromIndex(
     distanceM: safeDistanceM,
     elevations,
     profile: profile.length > 0 ? profile : undefined,
+    elevationHint: hint,
   };
 }
