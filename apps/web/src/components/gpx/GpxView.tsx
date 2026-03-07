@@ -29,6 +29,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
   const [deleting, setDeleting] = useState(false);
   const [refetching, setRefetching] = useState(false);
   const [error, setError] = useState<string | undefined>(initialError);
+  const [fitToSelectionTrigger, setFitToSelectionTrigger] = useState(0);
 
   const refetch = useCallback(async () => {
     setError(undefined);
@@ -126,7 +127,8 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
             </button>
             <button
               type="button"
-              title="Fit map to selected tracks (placeholder)"
+              title="Fit map to selected tracks"
+              onClick={() => setFitToSelectionTrigger((t) => t + 1)}
               className="rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-50"
               disabled={selectedIds.size === 0}
             >
@@ -144,10 +146,15 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
             onReorder={onReorder}
           />
         </section>
-        <GpxLegend />
+        <GpxLegend selectedFiles={selectedFiles} />
       </aside>
       <div className="min-w-0 flex-1">
-        <MapView baseUrl={baseUrl} files={selectedFiles} className="h-full" />
+        <MapView
+          baseUrl={baseUrl}
+          files={selectedFiles}
+          fitToSelectionTrigger={fitToSelectionTrigger}
+          className="h-full"
+        />
       </div>
     </div>
   );
