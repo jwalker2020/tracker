@@ -10,13 +10,14 @@ const DEFAULT_ZOOM = 4;
 type MapViewProps = {
   baseUrl: string;
   files: GpxFileRecord[];
+  lastSelectedId?: string | null;
   className?: string;
 };
 
 type LeafletMap = import("leaflet").Map & { setBase?: (w: "osm" | "usgs") => void };
 type LeafletLayerGroup = import("leaflet").LayerGroup;
 
-export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
+export function MapView({ baseUrl, files, lastSelectedId = null, className = "" }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const layersRef = useRef<LeafletLayerGroup | null>(null);
@@ -99,24 +100,22 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
 
     if (files.length === 0) return;
 
-    // Fit map to selected files' bounding boxes immediately using stored metadata
-    let minLat = Infinity, minLng = Infinity, maxLat = -Infinity, maxLng = -Infinity;
-    for (const rec of files) {
+    // When user selects a GPX file, zoom to show the latest track selected (that file only)
+    const toFit = lastSelectedId ? files.find((f) => f.id === lastSelectedId) : null;
+    if (mapRef.current && toFit) {
       try {
-        const b = JSON.parse(rec.boundsJson) as { south: number; west: number; north: number; east: number };
+        const b = JSON.parse(toFit.boundsJson) as { south: number; west: number; north: number; east: number };
         if (Number.isFinite(b.south) && Number.isFinite(b.west) && Number.isFinite(b.north) && Number.isFinite(b.east)) {
-          minLat = Math.min(minLat, b.south);
-          minLng = Math.min(minLng, b.west);
-          maxLat = Math.max(maxLat, b.north);
-          maxLng = Math.max(maxLng, b.east);
+          const bounds = L.latLngBounds([b.south, b.west], [b.north, b.east]);
+          mapRef.current.fitBounds(bounds, { padding: [24, 24], maxZoom: 14 });
+        } else if (Number.isFinite(toFit.centerLat) && Number.isFinite(toFit.centerLng)) {
+          mapRef.current.setView([toFit.centerLat, toFit.centerLng], 12);
         }
       } catch {
-        // skip invalid boundsJson
+        if (Number.isFinite(toFit.centerLat) && Number.isFinite(toFit.centerLng)) {
+          mapRef.current.setView([toFit.centerLat, toFit.centerLng], 12);
+        }
       }
-    }
-    if (minLat <= maxLat && minLng <= maxLng && mapRef.current) {
-      const union = L.latLngBounds([minLat, minLng], [maxLat, maxLng]);
-      mapRef.current.fitBounds(union, { padding: [24, 24], maxZoom: 14 });
     }
 
     // Draw tracks (async)
@@ -137,7 +136,7 @@ export function MapView({ baseUrl, files, className = "" }: MapViewProps) {
         })
         .catch(() => {});
     });
-  }, [ready, baseUrl, files]);
+  }, [ready, baseUrl, files, lastSelectedId]);
 
   return (
     <div className={`relative h-full w-full overflow-visible ${className}`}>
