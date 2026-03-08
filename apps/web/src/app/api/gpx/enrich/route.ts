@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import pb from "@/lib/pocketbase";
 import { enrichGpxWithDemPerTrack } from "@/lib/dem";
+import { buildEnhancementPerformance } from "@/lib/gpx/files";
 import { createJob, getProgress, setProgress } from "@/app/api/gpx/enrichment-progress/store";
 import {
   createCheckpointRecord,
@@ -79,6 +80,7 @@ async function runEnrichmentInBackground(
 ): Promise<void> {
   const demBasePath = process.env.DEM_BASE_PATH?.trim();
   const baseUrl = process.env.NEXT_PUBLIC_PB_URL ?? "";
+  let enhancementStartMs: number | undefined;
 
   try {
     setProgress(jobId, { currentPhase: "setup", currentPhasePercent: 0, overallPercentComplete: 0 });
@@ -123,6 +125,7 @@ async function runEnrichmentInBackground(
       overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING,
     });
 
+    enhancementStartMs = Date.now();
     const result = await enrichGpxWithDemPerTrack(gpxText, {
       demBasePath,
       manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
@@ -172,6 +175,17 @@ async function runEnrichmentInBackground(
     });
 
     demLog("Saving enrichment results to record...");
+    const enhancementEndMs = Date.now();
+    const totalPoints = enrichedTracks.reduce((s, t) => s + t.pointCount, 0);
+    const performance = buildEnhancementPerformance(
+      enhancementStartMs,
+      enhancementEndMs,
+      enrichedTracks.length,
+      totalPoints,
+      "completed",
+      totalPoints,
+      "completed"
+    );
     const update: Record<string, unknown> = {
       enrichedTracksJson: JSON.stringify(enrichedTracks),
       distanceM: aggregates.distanceM,
@@ -180,6 +194,7 @@ async function runEnrichmentInBackground(
       totalAscentM: aggregates.totalAscentM,
       totalDescentM: aggregates.totalDescentM,
       averageGradePct: aggregates.averageGradePct,
+      performanceJson: JSON.stringify(performance),
     };
     await pb.collection(COLLECTION).update(recordId, update);
     setProgress(jobId, {
@@ -192,14 +207,13 @@ async function runEnrichmentInBackground(
     } catch (e) {
       console.warn("[gpx/enrich] Checkpoint mark completed failed:", e);
     }
-    const totalCount = enrichedTracks.reduce((s, t) => s + t.pointCount, 0);
     setProgress(jobId, {
       status: "completed",
       currentPhase: "completed",
       currentPhasePercent: 100,
       overallPercentComplete: 100,
-      processedPoints: totalCount,
-      totalPoints: totalCount,
+      processedPoints: totalPoints,
+      totalPoints: totalPoints,
       percentComplete: 100,
     });
     demLog("Enrichment results saved. Job completed.");
@@ -211,6 +225,23 @@ async function runEnrichmentInBackground(
       await markCheckpointFailed(pb, recordId, jobId, message, true);
     } catch (e) {
       console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+    }
+    const enhancementEndMs = Date.now();
+    if (enhancementStartMs != null) {
+      const failedPerf = buildEnhancementPerformance(
+        enhancementStartMs,
+        enhancementEndMs,
+        0,
+        0,
+        "failed",
+        undefined,
+        "failed"
+      );
+      try {
+        await pb.collection(COLLECTION).update(recordId, { performanceJson: JSON.stringify(failedPerf) });
+      } catch (e) {
+        console.warn("[gpx/enrich] Failed to persist failure performance:", e);
+      }
     }
   }
 }
@@ -360,6 +391,7 @@ export async function POST(request: Request) {
     });
   }
 
+  const syncEnhancementStartMs = Date.now();
   let result: Awaited<ReturnType<typeof enrichGpxWithDemPerTrack>>;
   try {
     result = await enrichGpxWithDemPerTrack(gpxText, {
@@ -388,6 +420,18 @@ export async function POST(request: Request) {
     });
   }
 
+  const syncEnhancementEndMs = Date.now();
+  const totalPointsSync = enrichedTracks.reduce((s, t) => s + t.pointCount, 0);
+  const performanceSync = buildEnhancementPerformance(
+    syncEnhancementStartMs,
+    syncEnhancementEndMs,
+    enrichedTracks.length,
+    totalPointsSync,
+    "completed",
+    totalPointsSync,
+    "completed"
+  );
+
   const update: Record<string, unknown> = {
     enrichedTracksJson: JSON.stringify(enrichedTracks),
     distanceM: aggregates.distanceM,
@@ -396,6 +440,7 @@ export async function POST(request: Request) {
     totalAscentM: aggregates.totalAscentM,
     totalDescentM: aggregates.totalDescentM,
     averageGradePct: aggregates.averageGradePct,
+    performanceJson: JSON.stringify(performanceSync),
   };
 
   try {

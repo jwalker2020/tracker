@@ -1,6 +1,52 @@
 import pb from "@/lib/pocketbase";
 import { metersToFeet } from "@/lib/units";
 
+/**
+ * Enhancement performance/throughput metrics for a GPX enrichment run.
+ * Stored as JSON on gpx_files.performanceJson for analysis.
+ */
+export type GpxEnhancementPerformance = {
+  totalTracks: number;
+  totalPoints: number;
+  enhancementStartTime: string;
+  enhancementEndTime?: string;
+  enhancementDurationMs: number;
+  pointsPerMinute: number;
+  status?: "completed" | "failed";
+  processedPoints?: number;
+  currentPhase?: string;
+  averagePointsPerSecond?: number;
+};
+
+/** Build performance object from timing and counts. Handles divide-by-zero for pointsPerMinute. */
+export function buildEnhancementPerformance(
+  startTimeMs: number,
+  endTimeMs: number,
+  totalTracks: number,
+  totalPoints: number,
+  status: "completed" | "failed" = "completed",
+  processedPoints?: number,
+  currentPhase?: string
+): GpxEnhancementPerformance {
+  const durationMs = Math.max(0, endTimeMs - startTimeMs);
+  const minutes = durationMs / 60_000;
+  const pointsPerMinute = minutes > 0 && Number.isFinite(totalPoints) ? totalPoints / minutes : 0;
+  const seconds = durationMs / 1_000;
+  const averagePointsPerSecond = seconds > 0 && Number.isFinite(totalPoints) ? totalPoints / seconds : 0;
+  return {
+    totalTracks,
+    totalPoints,
+    enhancementStartTime: new Date(startTimeMs).toISOString(),
+    enhancementEndTime: new Date(endTimeMs).toISOString(),
+    enhancementDurationMs: durationMs,
+    pointsPerMinute: Math.round(pointsPerMinute * 100) / 100,
+    status,
+    ...(processedPoints != null && { processedPoints }),
+    ...(currentPhase != null && { currentPhase }),
+    averagePointsPerSecond: Math.round(averagePointsPerSecond * 100) / 100,
+  };
+}
+
 /** Internal record from PocketBase; elevation and distance are in meters. */
 export type GpxFileRecord = {
   id: string;
@@ -24,6 +70,8 @@ export type GpxFileRecord = {
   elevationProfileJson?: string;
   /** Per-track enrichment: JSON array of EnrichedTrackSummary (meters). */
   enrichedTracksJson?: string;
+  /** JSON: GpxEnhancementPerformance — enhancement run timing and throughput metrics. */
+  performanceJson?: string;
   sortOrder?: number;
   created: string;
   updated: string;
