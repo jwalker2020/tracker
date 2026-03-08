@@ -57,6 +57,18 @@ export function TrackDetailsPanel({ trackName, track }: TrackDetailsPanelProps) 
                 : "—"}
             </dd>
           </div>
+          <div className="flex justify-between gap-2">
+            <dt className="flex items-center gap-0 text-slate-400">
+              Avg Curviness
+              <InfoTooltip text="The average twistiness of the track." />
+            </dt>
+            <dd className="text-slate-200 tabular-nums">
+              {typeof track.averageCurvinessDegPerMile === "number" &&
+              Number.isFinite(track.averageCurvinessDegPerMile)
+                ? `${track.averageCurvinessDegPerMile.toFixed(1)} °/mi`
+                : "—"}
+            </dd>
+          </div>
         </dl>
       ) : (
         <p className="mt-2 text-slate-400 text-xs">Elevation data not available</p>

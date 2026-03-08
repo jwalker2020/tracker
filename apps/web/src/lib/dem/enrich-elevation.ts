@@ -501,6 +501,91 @@ function computeAggregates(tracks: EnrichedTrackSummary[]): EnrichmentAggregates
 const M_TO_FT = 3.28084;
 const M_TO_MI = 1 / 1609.344;
 
+/** Minimum segment length (m) to include; shorter segments are skipped to reduce GPS jitter. */
+const CURVINESS_MIN_SEGMENT_M = 2;
+/** Minimum turning angle (degrees) to count; smaller turns are ignored to reduce noise. */
+const CURVINESS_MIN_ANGLE_DEG = 2;
+const M_PER_MI = 1609.344;
+
+/**
+ * Compute average curviness: cumulative absolute direction change per unit distance.
+ * For each interior point B (with A = prev, C = next): bearing A→B and B→C (forward azimuth),
+ * turning angle = smallest angle between bearings in [-180, 180], then |angle|.
+ * Sum of |turning angles| is normalized by the same path's total length → degrees per mile.
+ * Straight ≈ 0; winding = higher. Noise: segments < 2 m and turns < 2° are excluded.
+ */
+function computeCurvinessDegPerMile(
+  points: Array<[number, number]>,
+  distanceM: number
+): number {
+  if (points.length < 3) return 0;
+
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const toDeg = (rad: number) => (rad * 180) / Math.PI;
+
+  const line = lineString(points.map(([lat, lng]) => [lng, lat]));
+  const pathLengthM = length(line, { units: "meters" });
+  const safeDistanceM =
+    Number.isFinite(pathLengthM) && pathLengthM > 0 ? pathLengthM : distanceM;
+  const denomM = Number.isFinite(safeDistanceM) && safeDistanceM > 0 ? safeDistanceM : 0;
+  if (denomM <= 0) return 0;
+
+  function bearingDeg(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const φ1 = toRad(lat1);
+    const φ2 = toRad(lat2);
+    const Δλ = toRad(lon2 - lon1);
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    let θ = toDeg(Math.atan2(y, x));
+    if (θ < 0) θ += 360;
+    return θ;
+  }
+
+  function segmentLengthM(i: number): number {
+    const [lat1, lon1] = points[i]!;
+    const [lat2, lon2] = points[i + 1]!;
+    const seg = lineString([
+      [lon1, lat1],
+      [lon2, lat2],
+    ]);
+    return length(seg, { units: "meters" });
+  }
+
+  let sumAbsTurnDeg = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    const c = points[i + 1]!;
+    const [latA, lonA] = a;
+    const [latB, lonB] = b;
+    const [latC, lonC] = c;
+    if (
+      !Number.isFinite(latA) ||
+      !Number.isFinite(lonA) ||
+      !Number.isFinite(latB) ||
+      !Number.isFinite(lonB) ||
+      !Number.isFinite(latC) ||
+      !Number.isFinite(lonC)
+    )
+      continue;
+    const segAB = segmentLengthM(i - 1);
+    const segBC = segmentLengthM(i);
+    if (segAB < CURVINESS_MIN_SEGMENT_M || segBC < CURVINESS_MIN_SEGMENT_M) continue;
+    const bearingAB = bearingDeg(latA, lonA, latB, lonB);
+    const bearingBC = bearingDeg(latB, lonB, latC, lonC);
+    let turnDeg = bearingBC - bearingAB;
+    while (turnDeg > 180) turnDeg -= 360;
+    while (turnDeg < -180) turnDeg += 360;
+    const absTurn = Math.abs(turnDeg);
+    if (absTurn < CURVINESS_MIN_ANGLE_DEG) continue;
+    sumAbsTurnDeg += absTurn;
+  }
+
+  const degPerMeter = sumAbsTurnDeg / denomM;
+  const degPerMile = degPerMeter * M_PER_MI;
+  return Number.isFinite(degPerMile) ? Math.max(0, degPerMile) : 0;
+}
+
 function toEnrichedTrackSummary(
   track: import("./gpx-extract").ExtractedTrack,
   result: ElevationEnrichmentResult
@@ -517,6 +602,8 @@ function toEnrichedTrackSummary(
           lng: p.lng,
         }))
       : null;
+  const averageCurvinessDegPerMile = computeCurvinessDegPerMile(track.points, result.distanceM);
+
   return {
     trackIndex: track.trackIndex,
     name: track.name,
@@ -531,6 +618,7 @@ function toEnrichedTrackSummary(
     totalDescentM: result.stats.totalDescentM,
     averageGradePct: result.stats.averageGradePct,
     averageSteepnessPct: result.stats.averageSteepnessPct,
+    averageCurvinessDegPerMile,
     validCount: result.stats.validCount,
     elevationProfileJson: profileForStorage ? JSON.stringify(profileForStorage) : null,
   };

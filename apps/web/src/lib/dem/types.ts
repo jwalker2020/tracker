@@ -73,6 +73,8 @@ export type EnrichedTrackSummary = {
   totalDescentM: number;
   averageGradePct: number;
   averageSteepnessPct: number;
+  /** Average curviness: cumulative absolute direction change (degrees) per mile. 0 = straight; higher = more winding. */
+  averageCurvinessDegPerMile: number;
   validCount: number;
   /** JSON array of { d: distanceM, e: elevationM } for this track only. */
   elevationProfileJson: string | null;

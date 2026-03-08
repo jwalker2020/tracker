@@ -44,6 +44,8 @@ export type EnrichedTrackSummaryForDisplay = {
   totalDescentFt: number;
   averageGradePct: number;
   averageSteepnessPct: number;
+  /** Average curviness in degrees per mile (0 = straight; higher = more winding). */
+  averageCurvinessDegPerMile: number;
   validCount: number;
   elevationProfileJson: string | null;
 };
@@ -102,6 +104,7 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
         totalDescentM: number;
         averageGradePct: number;
         averageSteepnessPct?: number;
+        averageCurvinessDegPerMile?: number;
         validCount: number;
         elevationProfileJson: string | null;
       }>;
@@ -120,6 +123,10 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
           totalDescentFt: metersToFeet(t.totalDescentM),
           averageGradePct: t.averageGradePct,
           averageSteepnessPct: typeof t.averageSteepnessPct === "number" ? t.averageSteepnessPct : 0,
+          averageCurvinessDegPerMile:
+            typeof t.averageCurvinessDegPerMile === "number" && Number.isFinite(t.averageCurvinessDegPerMile)
+              ? t.averageCurvinessDegPerMile
+              : 0,
           validCount: t.validCount,
           elevationProfileJson: (() => {
             if (!t.elevationProfileJson) return null;
