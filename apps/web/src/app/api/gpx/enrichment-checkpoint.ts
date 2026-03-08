@@ -169,9 +169,6 @@ export async function saveCheckpoint(
   if (data.priorElevationM != null) body.priorElevationM = data.priorElevationM;
   if (data.profileJson != null) body.profileJson = data.profileJson;
   await pb.collection(COLLECTION).update(recordIdToUpdate, body);
-  process.stderr.write(
-    `[enrichment-checkpoint] Updated id=${recordIdToUpdate} processedPoints=${data.processedPoints} totalPoints=${data.totalPoints}\n`
-  );
 }
 
 /**

@@ -144,7 +144,6 @@ async function runEnrichmentInBackground(
       },
       resumeState,
       onCheckpoint: (payload) => {
-        demLog(`Checkpoint save: ${payload.processedPoints}/${payload.totalPoints} (id=${checkpointRecordId ?? "lookup"})`);
         Promise.resolve(saveCheckpoint(pb, recordId, jobId, payload, checkpointRecordId)).catch(
           (e: unknown) => {
             const msg = e instanceof Error ? e.message : String(e);
@@ -297,7 +296,6 @@ export async function POST(request: Request) {
           chunkSize: CHUNK_SIZE,
         });
         checkpointRecordId = created.id;
-        demLog(`Checkpoint record created: ${created.id}`);
       } catch (e: unknown) {
         const err = e as {
           response?: { message?: string; data?: Record<string, unknown> };
