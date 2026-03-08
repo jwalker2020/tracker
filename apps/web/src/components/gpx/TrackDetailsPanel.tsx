@@ -5,6 +5,7 @@ import {
   formatElevationFt,
 } from "@/lib/units";
 import type { EnrichedTrackSummaryForDisplay } from "@/lib/gpx";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 
 type TrackDetailsPanelProps = {
   trackName: string;
@@ -37,18 +38,22 @@ export function TrackDetailsPanel({ trackName, track }: TrackDetailsPanelProps) 
             <dd className="text-slate-200 tabular-nums">{formatElevationFt(track.maxElevationFt)}</dd>
           </div>
           <div className="flex justify-between gap-2">
-            <dt className="text-slate-400">Total Ascent</dt>
-            <dd className="text-slate-200 tabular-nums">{formatElevationFt(track.totalAscentFt)}</dd>
+            <dt className="flex items-center gap-0 text-slate-400">
+              Elevation Δ
+              <InfoTooltip text="The total elevation change, up AND down, over the entire track." />
+            </dt>
+            <dd className="text-slate-200 tabular-nums">
+              {formatElevationFt(Math.abs(track.totalAscentFt) + Math.abs(track.totalDescentFt))}
+            </dd>
           </div>
           <div className="flex justify-between gap-2">
-            <dt className="text-slate-400">Total Descent</dt>
-            <dd className="text-slate-200 tabular-nums">{formatElevationFt(track.totalDescentFt)}</dd>
-          </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-slate-400">Avg Grade</dt>
+            <dt className="flex items-center gap-0 text-slate-400">
+              Avg Grade
+              <InfoTooltip text="The average steepness over the track. This is measured as a percent grade." />
+            </dt>
             <dd className="text-slate-200 tabular-nums">
               {typeof track.averageGradePct === "number" && Number.isFinite(track.averageGradePct)
-                ? `${track.averageGradePct.toFixed(2)}%`
+                ? `${Math.abs(track.averageGradePct).toFixed(2)}%`
                 : "—"}
             </dd>
           </div>
