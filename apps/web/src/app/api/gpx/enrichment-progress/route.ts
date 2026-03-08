@@ -19,9 +19,16 @@ export async function GET(request: Request) {
   }
   return NextResponse.json({
     status: progress.status,
+    overallPercentComplete: progress.overallPercentComplete,
+    currentPhase: progress.currentPhase,
+    currentPhasePercent: progress.currentPhasePercent,
     processedPoints: progress.processedPoints,
     totalPoints: progress.totalPoints,
     percentComplete: progress.percentComplete,
+    ...(progress.currentTrackIndex != null && { currentTrackIndex: progress.currentTrackIndex }),
+    ...(progress.totalTracks != null && { totalTracks: progress.totalTracks }),
+    ...(progress.startedAt != null && { startedAt: progress.startedAt }),
+    ...(progress.updatedAt != null && { updatedAt: progress.updatedAt }),
     ...(progress.error != null && { error: progress.error }),
   });
 }

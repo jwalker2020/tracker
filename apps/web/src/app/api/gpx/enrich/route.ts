@@ -13,6 +13,11 @@ const COLLECTION = "gpx_files";
 const DEM_LOG_INTERVAL_MS = 10_000;
 const CHUNK_SIZE = 10_000;
 
+const WEIGHT_SETUP = 5;
+const WEIGHT_PARSING = 5;
+const WEIGHT_ENRICHMENT = 78;
+const WEIGHT_SAVING = 12;
+
 function demLog(msg: string): void {
   try {
     process.stderr.write(`[DEM] ${msg}\n`);
@@ -47,7 +52,9 @@ function startProgressLogging(jobId: string, isResume: boolean = false): void {
       return;
     }
     if (p.status !== "running") return;
-    const { processedPoints, totalPoints, percentComplete } = p;
+    const overallPercentComplete = p.overallPercentComplete ?? p.percentComplete ?? 0;
+    const currentPhase = p.currentPhase ?? "enrichment";
+    const { processedPoints, totalPoints } = p;
     const elapsedMs = Date.now() - startMs;
     const elapsedSec = Math.floor(elapsedMs / 1000);
     let estimatedRemaining = "";
@@ -57,8 +64,8 @@ function startProgressLogging(jobId: string, isResume: boolean = false): void {
       estimatedRemaining = formatHhMmSs(remainingSec);
     }
     demLog(
-      "Enrichment progress\n" +
-        `  Processed: ${processedPoints.toLocaleString()} / ${totalPoints.toLocaleString()} points (${percentComplete}%)\n` +
+      `Progress: ${overallPercentComplete}% (phase: ${currentPhase})\n` +
+        `  Processed: ${processedPoints.toLocaleString()} / ${totalPoints.toLocaleString()} points\n` +
         `  Elapsed: ${formatHhMmSs(elapsedSec)}\n` +
         (estimatedRemaining ? `  Estimated remaining: ${estimatedRemaining}` : "")
     );
@@ -74,12 +81,14 @@ async function runEnrichmentInBackground(
   const baseUrl = process.env.NEXT_PUBLIC_PB_URL ?? "";
 
   try {
+    setProgress(jobId, { currentPhase: "setup", currentPhasePercent: 0, overallPercentComplete: 0 });
+
     if (!demBasePath) {
-      setProgress(jobId, { status: "failed", error: "DEM_BASE_PATH is not set.", percentComplete: 100 });
+      setProgress(jobId, { status: "failed", error: "DEM_BASE_PATH is not set." });
       return;
     }
     if (!baseUrl) {
-      setProgress(jobId, { status: "failed", error: "NEXT_PUBLIC_PB_URL is not set.", percentComplete: 100 });
+      setProgress(jobId, { status: "failed", error: "NEXT_PUBLIC_PB_URL is not set." });
       return;
     }
 
@@ -87,7 +96,7 @@ async function runEnrichmentInBackground(
     try {
       record = await pb.collection(COLLECTION).getOne(recordId);
     } catch {
-      setProgress(jobId, { status: "failed", error: "Record not found.", percentComplete: 100 });
+      setProgress(jobId, { status: "failed", error: "Record not found." });
       return;
     }
 
@@ -98,22 +107,45 @@ async function runEnrichmentInBackground(
       if (!res.ok) throw new Error(`File fetch ${res.status}`);
       gpxText = await res.text();
     } catch {
-      setProgress(jobId, { status: "failed", error: "Could not load GPX file from storage.", percentComplete: 100 });
+      setProgress(jobId, { status: "failed", error: "Could not load GPX file from storage." });
       return;
     }
+
+    setProgress(jobId, {
+      currentPhase: "parsing",
+      currentPhasePercent: 100,
+      overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING,
+    });
+
+    setProgress(jobId, {
+      currentPhase: "enrichment",
+      currentPhasePercent: 0,
+      overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING,
+    });
 
     const result = await enrichGpxWithDemPerTrack(gpxText, {
       demBasePath,
       manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
       onProgress: ({ processedPoints, totalPoints, percentComplete }) => {
-        setProgress(jobId, { processedPoints, totalPoints, percentComplete });
+        const overall =
+          WEIGHT_SETUP +
+          WEIGHT_PARSING +
+          Math.round((percentComplete / 100) * WEIGHT_ENRICHMENT);
+        setProgress(jobId, {
+          processedPoints,
+          totalPoints: Math.max(totalPoints, processedPoints),
+          percentComplete: overall,
+          currentPhase: "enrichment",
+          currentPhasePercent: percentComplete,
+          overallPercentComplete: Math.min(99, overall),
+        });
       },
     });
 
     const { enrichedTracks, aggregates } = result;
     const hasAnyValidData = enrichedTracks.some((t) => t.validCount > 0);
     if (enrichedTracks.length === 0) {
-      setProgress(jobId, { status: "failed", error: "No tracks found in GPX.", percentComplete: 100 });
+      setProgress(jobId, { status: "failed", error: "No tracks found in GPX." });
       try {
         await markCheckpointFailed(pb, recordId, jobId, "No tracks found in GPX.", true);
       } catch (e) {
@@ -123,7 +155,7 @@ async function runEnrichmentInBackground(
     }
     if (!hasAnyValidData) {
       const reason = "All samples were nodata or out of extent for every track.";
-      setProgress(jobId, { status: "failed", error: reason, percentComplete: 100 });
+      setProgress(jobId, { status: "failed", error: reason });
       try {
         await markCheckpointFailed(pb, recordId, jobId, reason, true);
       } catch (e) {
@@ -131,6 +163,13 @@ async function runEnrichmentInBackground(
       }
       return;
     }
+
+    setProgress(jobId, {
+      currentPhase: "saving",
+      currentPhasePercent: 0,
+      overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING + WEIGHT_ENRICHMENT,
+      totalTracks: enrichedTracks.length,
+    });
 
     demLog("Saving enrichment results to record...");
     const update: Record<string, unknown> = {
@@ -143,6 +182,11 @@ async function runEnrichmentInBackground(
       averageGradePct: aggregates.averageGradePct,
     };
     await pb.collection(COLLECTION).update(recordId, update);
+    setProgress(jobId, {
+      currentPhase: "saving",
+      currentPhasePercent: 80,
+      overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING + WEIGHT_ENRICHMENT + Math.round(WEIGHT_SAVING * 0.8),
+    });
     try {
       await markCheckpointCompleted(pb, recordId, jobId);
     } catch (e) {
@@ -151,6 +195,9 @@ async function runEnrichmentInBackground(
     const totalCount = enrichedTracks.reduce((s, t) => s + t.pointCount, 0);
     setProgress(jobId, {
       status: "completed",
+      currentPhase: "completed",
+      currentPhasePercent: 100,
+      overallPercentComplete: 100,
       processedPoints: totalCount,
       totalPoints: totalCount,
       percentComplete: 100,
@@ -159,7 +206,7 @@ async function runEnrichmentInBackground(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[gpx/enrich] background job", err);
-    setProgress(jobId, { status: "failed", error: message, percentComplete: 100 });
+    setProgress(jobId, { status: "failed", error: message });
     try {
       await markCheckpointFailed(pb, recordId, jobId, message, true);
     } catch (e) {
@@ -219,28 +266,38 @@ export async function POST(request: Request) {
         checkpoint.status === "running" && Number.isFinite(heartbeatMs) && heartbeatMs < HEARTBEAT_MAX_AGE_MS;
 
       if (alreadyRunning) {
+        const total = checkpoint.totalPoints ?? 0;
+        const processed = checkpoint.processedPoints ?? 0;
+        const phasePct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+        const overall =
+          WEIGHT_SETUP + WEIGHT_PARSING + Math.round((phasePct / 100) * WEIGHT_ENRICHMENT);
         setProgress(jobId, {
           status: "running",
-          processedPoints: checkpoint.processedPoints,
-          totalPoints: checkpoint.totalPoints,
-          percentComplete:
-            (checkpoint.totalPoints ?? 0) > 0
-              ? Math.min(100, Math.round(((checkpoint.processedPoints ?? 0) / (checkpoint.totalPoints ?? 1)) * 100))
-              : 0,
+          processedPoints: processed,
+          totalPoints: total,
+          percentComplete: overall,
+          currentPhase: "enrichment",
+          currentPhasePercent: phasePct,
+          overallPercentComplete: Math.min(99, overall),
         });
         startProgressLogging(jobId, false);
         return NextResponse.json({ ok: true, jobId, resumed: false });
       }
 
       isResume = checkpoint.nextPointIndex > 0;
+      const total = checkpoint.totalPoints ?? 0;
+      const processed = checkpoint.processedPoints ?? 0;
+      const phasePct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+      const overall =
+        WEIGHT_SETUP + WEIGHT_PARSING + Math.round((phasePct / 100) * WEIGHT_ENRICHMENT);
       setProgress(jobId, {
         status: "running",
-        processedPoints: checkpoint.processedPoints,
-        totalPoints: checkpoint.totalPoints,
-        percentComplete:
-          (checkpoint.totalPoints ?? 0) > 0
-            ? Math.min(100, Math.round(((checkpoint.processedPoints ?? 0) / (checkpoint.totalPoints ?? 1)) * 100))
-            : 0,
+        processedPoints: processed,
+        totalPoints: total,
+        percentComplete: overall,
+        currentPhase: "enrichment",
+        currentPhasePercent: phasePct,
+        overallPercentComplete: Math.min(99, overall),
       });
     } else {
       jobId = createJob();

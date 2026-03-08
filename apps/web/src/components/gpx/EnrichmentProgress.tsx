@@ -12,10 +12,23 @@ export type EnrichmentProgressProps = {
 
 type ProgressState = {
   status: "running" | "completed" | "failed";
+  overallPercentComplete?: number;
+  currentPhase?: string;
+  currentPhasePercent?: number;
   processedPoints: number;
   totalPoints: number;
   percentComplete: number;
+  currentTrackIndex?: number;
+  totalTracks?: number;
   error?: string;
+};
+
+const PHASE_LABELS: Record<string, string> = {
+  setup: "Preparing…",
+  parsing: "Parsing GPX",
+  enrichment: "Enriching elevation",
+  saving: "Saving results",
+  completed: "Complete",
 };
 
 export function EnrichmentProgress({ jobId, onComplete, onError }: EnrichmentProgressProps) {
@@ -91,13 +104,17 @@ export function EnrichmentProgress({ jobId, onComplete, onError }: EnrichmentPro
     return null;
   }
 
-  const pct = progress?.percentComplete ?? 0;
+  const pct = progress?.overallPercentComplete ?? progress?.percentComplete ?? 0;
   const processed = progress?.processedPoints ?? 0;
-  const total = progress?.totalPoints ?? 0;
+  const total = Math.max(progress?.totalPoints ?? 0, processed);
+  const phase = progress?.currentPhase ?? "enrichment";
+  const phaseLabel = PHASE_LABELS[phase] ?? phase;
+  const totalTracks = progress?.totalTracks;
+  const currentTrackIndex = progress?.currentTrackIndex;
 
   return (
     <div className="space-y-2 rounded border border-slate-600 bg-slate-800/50 px-3 py-2" role="status" aria-live="polite">
-      <p className="text-xs font-medium text-slate-300">Processing GPX elevation data</p>
+      <p className="text-xs font-medium text-slate-300">{phaseLabel}</p>
       <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-slate-600">
         <div
           className="h-full rounded-full bg-sky-600 transition-[width] duration-300 ease-out dark:bg-sky-500"
@@ -105,7 +122,13 @@ export function EnrichmentProgress({ jobId, onComplete, onError }: EnrichmentPro
         />
       </div>
       <p className="text-xs text-slate-400">
-        {pct}% {total > 0 ? ` · ${processed.toLocaleString()} / ${total.toLocaleString()} points` : ""}
+        {pct}%
+        {total > 0 ? ` · ${processed.toLocaleString()} / ${total.toLocaleString()} points` : ""}
+        {totalTracks != null && totalTracks > 0 && currentTrackIndex != null
+          ? ` · Track ${currentTrackIndex + 1} of ${totalTracks}`
+          : totalTracks != null && totalTracks > 0
+            ? ` · ${totalTracks} track${totalTracks !== 1 ? "s" : ""}`
+            : ""}
       </p>
     </div>
   );
