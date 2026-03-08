@@ -74,7 +74,9 @@ export class DemRasterSampler {
 
     let geotiff: { getImage: (index?: number) => Promise<GeoTIFFImage> };
     try {
-      geotiff = await fromArrayBuffer(buffer);
+      geotiff = (await fromArrayBuffer(buffer)) as {
+        getImage: (index?: number) => Promise<GeoTIFFImage>;
+      };
     } catch (err) {
       console.warn("[DEM] Could not parse GeoTIFF:", fullPath, err instanceof Error ? err.message : String(err));
       return null;

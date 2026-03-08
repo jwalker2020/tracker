@@ -9,6 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "echarts": "^5.5.0",
+    "echarts-for-react": "^3.0.2",
     "@tmcw/togeojson": "^7.1.2",
     "@turf/along": "^7.3.4",
     "@turf/bbox": "^7.3.4",

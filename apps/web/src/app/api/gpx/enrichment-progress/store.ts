@@ -15,7 +15,10 @@ export type EnrichmentProgress = {
 };
 
 const GLOBAL_KEY = "__gpx_enrichment_progress_store";
-const g = typeof globalThis !== "undefined" ? (globalThis as Record<string, Map<string, EnrichmentProgress> | undefined>) : undefined;
+const g =
+  typeof globalThis !== "undefined"
+    ? (globalThis as unknown as Record<string, Map<string, EnrichmentProgress> | undefined>)
+    : undefined;
 const store: Map<string, EnrichmentProgress> =
   g?.[GLOBAL_KEY] ?? (() => {
     const m = new Map<string, EnrichmentProgress>();

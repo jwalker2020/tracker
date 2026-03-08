@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
@@ -9,7 +9,8 @@ import {
   formatDistanceMiles,
   formatElevationFt,
 } from "@/lib/units";
-import { TrackElevationProfile, type ProfilePoint } from "@/components/gpx/TrackElevationProfile";
+import { getLatLngForIndex, TrackElevationProfile, type ProfilePoint } from "@/components/gpx/TrackElevationProfile";
+import { MapHoverMarker } from "@/components/maps/MapHoverMarker";
 
 import "leaflet/dist/leaflet.css";
 
@@ -225,13 +226,20 @@ function parseProfileJson(json: string | null): ProfilePoint[] | null {
   try {
     const arr = JSON.parse(json) as unknown;
     if (!Array.isArray(arr)) return null;
-    const points = arr.filter(
-      (p): p is ProfilePoint =>
-        p != null &&
-        typeof p === "object" &&
-        typeof (p as ProfilePoint).d === "number" &&
-        typeof (p as ProfilePoint).e === "number"
-    );
+    const points = arr
+      .filter(
+        (p): p is Record<string, unknown> =>
+          p != null && typeof p === "object" && "d" in p && "e" in p
+      )
+      .map((p) => {
+        const d = Number((p as ProfilePoint).d);
+        const e = Number((p as ProfilePoint).e);
+        if (!Number.isFinite(d) || !Number.isFinite(e)) return null;
+        const lat = typeof (p as ProfilePoint).lat === "number" ? (p as ProfilePoint).lat : undefined;
+        const lng = typeof (p as ProfilePoint).lng === "number" ? (p as ProfilePoint).lng : undefined;
+        return { d, e, lat, lng } as ProfilePoint;
+      })
+      .filter((p): p is ProfilePoint => p != null);
     return points.length >= 2 ? points : null;
   } catch {
     return null;
@@ -246,6 +254,28 @@ export function MapView({
 }: MapViewProps) {
   const [basemap, setBasemap] = useState<"osm" | "usgs">("osm");
   const [selectedTrack, setSelectedTrack] = useState<SelectedTrack | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [selectedTrackPoints, setSelectedTrackPoints] = useState<[number, number][] | null>(null);
+
+  useEffect(() => {
+    setHoveredIndex(null);
+    setSelectedTrackPoints(null);
+  }, [selectedTrack]);
+
+  useEffect(() => {
+    if (!selectedTrack || !baseUrl) return;
+    const file = files.find((f) => f.id === selectedTrack.fileId);
+    if (!file) return;
+    let cancelled = false;
+    getDisplayGeometry(file, baseUrl).then(({ tracks }) => {
+      if (cancelled) return;
+      const track = tracks[selectedTrack.trackIndex];
+      setSelectedTrackPoints(track?.points && track.points.length >= 2 ? track.points : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl, files, selectedTrack]);
 
   const selectedProfile = useMemo(() => {
     if (!selectedTrack) return null;
@@ -255,6 +285,19 @@ export function MapView({
     const profilePoints = parseProfileJson(track.elevationProfileJson);
     return { trackName: track.name, profilePoints };
   }, [files, selectedTrack]);
+
+  const onHoverIndex = useCallback((index: number | null) => {
+    setHoveredIndex((prev) => (index === prev ? prev : index));
+  }, []);
+
+  const hoveredLatLng = useMemo((): [number, number] | null => {
+    if (hoveredIndex == null || !selectedProfile?.profilePoints) return null;
+    return getLatLngForIndex(
+      selectedProfile.profilePoints,
+      selectedTrackPoints,
+      hoveredIndex
+    );
+  }, [hoveredIndex, selectedProfile?.profilePoints, selectedTrackPoints]);
 
   return (
     <div className={`flex h-full w-full flex-col overflow-visible ${className}`}>
@@ -276,6 +319,7 @@ export function MapView({
             selectedTrack={selectedTrack}
             setSelectedTrack={setSelectedTrack}
           />
+          <MapHoverMarker hoveredLatLng={hoveredLatLng} />
           <FitToSelection files={files} fitToSelectionTrigger={fitToSelectionTrigger} />
         </MapContainer>
         <div className="absolute left-2 bottom-12 z-[1000] flex flex-col gap-1 rounded border border-slate-700 bg-slate-900/95 p-1.5 shadow">
@@ -301,6 +345,8 @@ export function MapView({
             <TrackElevationProfile
               trackName={selectedProfile.trackName}
               profilePoints={selectedProfile.profilePoints}
+              trackPoints={selectedTrackPoints}
+              onHoverIndex={onHoverIndex}
             />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-400">

@@ -77,8 +77,8 @@ export type DemEnrichmentConfig = {
   onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
 };
 
-/** Lightweight profile: cumulative distance (m) and elevation (m) per point. Internal units; convert to feet for UI in gpxRecordToDisplay. */
-export type ElevationProfilePoint = { d: number; e: number };
+/** Lightweight profile: cumulative distance (m), elevation (m), and map coords per point. */
+export type ElevationProfilePoint = { d: number; e: number; lat: number; lng: number };
 
 export type ElevationEnrichmentResult = {
   stats: ElevationStats;
@@ -351,7 +351,7 @@ export async function enrichSingleTrackFromIndex(
 
         const cumDist = Math.round((i * segmentLength) * 10) / 10;
         const e = value != null && isValidElevation(value) ? Math.round(value * 10) / 10 : 0;
-        profileSoFar.push({ d: cumDist, e });
+        profileSoFar.push({ d: cumDist, e, lat, lng });
 
         const processed = i + 1;
         if (processed % progressInterval === 0 || processed === totalPoints) {
@@ -513,6 +513,8 @@ function toEnrichedTrackSummary(
       ? result.profile.map((p) => ({
           d: Number((p.d * M_TO_MI).toFixed(6)),
           e: Number((p.e * M_TO_FT).toFixed(2)),
+          lat: p.lat,
+          lng: p.lng,
         }))
       : null;
   return {
