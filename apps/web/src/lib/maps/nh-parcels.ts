@@ -22,6 +22,7 @@ export type ParcelBounds = {
 export type ParcelFeature = GeoJSON.Feature<GeoJSON.Polygon, ParcelAttributes>;
 
 export type ParcelAttributes = {
+  parceloid?: number | null;
   town?: string | null;
   name?: string | null;
   streetaddress?: string | null;
@@ -55,7 +56,7 @@ export async function fetchParcelsInBounds(bounds: ParcelBounds): Promise<Parcel
     spatialRel: "esriSpatialRelIntersects",
     outSR: "4326",
     returnGeometry: "true",
-    outFields: "town,name,streetaddress,displayid,pid,nh_gis_id,SHAPE__Area,slu,sluc,slum",
+    outFields: "parceloid,town,name,streetaddress,displayid,pid,nh_gis_id,SHAPE__Area,slu,sluc,slum",
     resultRecordCount: String(MAX_RECORD_COUNT),
     f: "geojson",
   });
@@ -67,10 +68,21 @@ export async function fetchParcelsInBounds(bounds: ParcelBounds): Promise<Parcel
   return data;
 }
 
-/** Build a short label for popup: show only attributes that exist. */
-export function formatParcelPopupContent(attrs: ParcelAttributes): string {
+/** Optional CAMA record for richer popup (e.g. sluc_desc). */
+export type CamaAttrsForPopup = {
+  sluc_desc?: string | null;
+  countyname?: string | null;
+  [key: string]: unknown;
+};
+
+/** Build popup HTML from parcel attrs and optional CAMA. Shows Land Use Description when CAMA provides sluc_desc. */
+export function formatParcelPopupContent(
+  attrs: ParcelAttributes,
+  cama?: CamaAttrsForPopup | null
+): string {
   const lines: string[] = [];
   if (attrs.town) lines.push(`<strong>Town</strong>: ${escapeHtml(attrs.town)}`);
+  if (cama?.countyname) lines.push(`<strong>County</strong>: ${escapeHtml(cama.countyname)}`);
   if (attrs.displayid) lines.push(`<strong>Map-Lot</strong>: ${escapeHtml(attrs.displayid)}`);
   if (attrs.pid) lines.push(`<strong>PID</strong>: ${escapeHtml(attrs.pid)}`);
   if (attrs.nh_gis_id) lines.push(`<strong>NH GIS ID</strong>: ${escapeHtml(attrs.nh_gis_id)}`);
@@ -80,8 +92,9 @@ export function formatParcelPopupContent(attrs: ParcelAttributes): string {
     const acres = (attrs.SHAPE__Area / 43560).toFixed(2);
     lines.push(`<strong>Acreage</strong>: ${acres} ac`);
   }
-  if (attrs.slu) lines.push(`<strong>Land use</strong>: ${escapeHtml(attrs.slu)}`);
-  if (attrs.sluc) lines.push(`<strong>Land use code</strong>: ${escapeHtml(attrs.sluc)}`);
+  const landUseCode = attrs.slu || attrs.sluc;
+  if (landUseCode) lines.push(`<strong>Land use code</strong>: ${escapeHtml(landUseCode)}`);
+  if (cama?.sluc_desc) lines.push(`<strong>Land use description</strong>: ${escapeHtml(cama.sluc_desc)}`);
   if (lines.length === 0) return "No attributes available.";
   return lines.join("<br/>");
 }

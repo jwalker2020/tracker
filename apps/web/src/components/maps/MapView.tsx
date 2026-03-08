@@ -20,6 +20,7 @@ import {
   NH_PARCELS_ATTRIBUTION,
   type ParcelAttributes,
 } from "@/lib/maps/nh-parcels";
+import { fetchCamaByParcelOid } from "@/lib/maps/nh-parcel-details";
 
 import "leaflet/dist/leaflet.css";
 
@@ -235,10 +236,19 @@ function ParcelOverlay({ enabled }: { enabled: boolean }) {
         style: () => PARCEL_STYLE,
         onEachFeature(feature, layerInstance) {
           const attrs = feature.properties as ParcelAttributes | undefined;
-          if (attrs) {
-            layerInstance.bindPopup(formatParcelPopupContent(attrs), {
-              maxWidth: 320,
-              className: "parcel-popup",
+          if (!attrs) return;
+          layerInstance.bindPopup(formatParcelPopupContent(attrs), {
+            maxWidth: 320,
+            className: "parcel-popup",
+          });
+          const popup = layerInstance.getPopup();
+          const parceloid = attrs.parceloid != null && Number.isFinite(attrs.parceloid) ? Number(attrs.parceloid) : null;
+          if (popup && parceloid !== null) {
+            popup.on("add", function onOpen() {
+              popup.off("add", onOpen);
+              fetchCamaByParcelOid(parceloid).then((cama) => {
+                if (popup.isOpen() && cama) popup.setContent(formatParcelPopupContent(attrs, cama));
+              });
             });
           }
         },
