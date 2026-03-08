@@ -14,6 +14,12 @@ import {
 import { getLatLngForIndex, TrackElevationProfile, type ProfilePoint } from "@/components/gpx/TrackElevationProfile";
 import { TrackDetailsPanel } from "@/components/gpx/TrackDetailsPanel";
 import { MapHoverMarker } from "@/components/maps/MapHoverMarker";
+import {
+  fetchParcelsInBounds,
+  formatParcelPopupContent,
+  NH_PARCELS_ATTRIBUTION,
+  type ParcelAttributes,
+} from "@/lib/maps/nh-parcels";
 
 import "leaflet/dist/leaflet.css";
 
@@ -37,6 +43,8 @@ type MapViewProps = {
   /** Which hillshade overlay to show: none | usgs | esri. Renders above basemap, below tracks. */
   hillshadeMode?: HillshadeMode;
   onHillshadeModeChange?: (mode: HillshadeMode) => void;
+  /** When true, NH parcels overlay is shown above basemap/hillshade, below tracks. */
+  parcelsEnabled?: boolean;
 };
 
 type LeafletPolyline = import("leaflet").Polyline;
@@ -180,6 +188,85 @@ function GpxOverlay({
   return null;
 }
 
+const PARCEL_STYLE = {
+  color: "#94a3b8",
+  weight: 1,
+  fillColor: "#cbd5e1",
+  fillOpacity: 0.15,
+};
+
+function ParcelOverlay({ enabled }: { enabled: boolean }) {
+  const map = useMap();
+  const layerRef = useRef<L.GeoJSON | null>(null);
+
+  const loadParcels = useCallback(() => {
+    if (!enabled) return;
+    const b = map.getBounds();
+    const bounds = {
+      west: b.getWest(),
+      south: b.getSouth(),
+      east: b.getEast(),
+      north: b.getNorth(),
+    };
+    let cancelled = false;
+    fetchParcelsInBounds(bounds)
+      .then((geojson) => {
+        if (cancelled || !layerRef.current) return;
+        layerRef.current.clearLayers();
+        layerRef.current.addData(geojson as GeoJSON.FeatureCollection);
+      })
+      .catch(() => {
+        if (!cancelled && layerRef.current) {
+          layerRef.current.clearLayers();
+        }
+      });
+  }, [map, enabled]);
+
+  useEffect(() => {
+    if (!enabled) {
+      if (layerRef.current) {
+        map.removeLayer(layerRef.current);
+        layerRef.current = null;
+      }
+      return;
+    }
+    const emptyGeoJSON: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+    const layer = L.geoJSON(emptyGeoJSON, {
+        style: () => PARCEL_STYLE,
+        onEachFeature(feature, layerInstance) {
+          const attrs = feature.properties as ParcelAttributes | undefined;
+          if (attrs) {
+            layerInstance.bindPopup(formatParcelPopupContent(attrs), {
+              maxWidth: 320,
+              className: "parcel-popup",
+            });
+          }
+        },
+    }).addTo(map);
+    layerRef.current = layer;
+    map.attributionControl?.addAttribution(NH_PARCELS_ATTRIBUTION);
+    loadParcels();
+    return () => {
+      map.attributionControl?.removeAttribution(NH_PARCELS_ATTRIBUTION);
+      if (layerRef.current) {
+        map.removeLayer(layerRef.current);
+        layerRef.current = null;
+      }
+    };
+  }, [map, enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const onMoveEnd = () => loadParcels();
+    map.on("moveend", onMoveEnd);
+    return () => {
+      map.off("moveend", onMoveEnd);
+    };
+  }, [map, enabled, loadParcels]);
+
+  return null;
+}
+
 function parseProfileJson(json: string | null): ProfilePoint[] | null {
   if (!json || typeof json !== "string") return null;
   try {
@@ -214,6 +301,7 @@ export function MapView({
   onBasemapIdChange,
   hillshadeMode: controlledHillshadeMode,
   onHillshadeModeChange,
+  parcelsEnabled = false,
 }: MapViewProps) {
   const files = filesProp ?? [];
   const [internalBasemapId, setInternalBasemapId] = useState<string>(DEFAULT_BASEMAP_ID);
@@ -316,7 +404,8 @@ export function MapView({
               zIndex={1}
             />
           )}
-          {/* GpxOverlay and MapHoverMarker render above tile layers (overlay pane) so track click/hover work. */}
+          {parcelsEnabled && <ParcelOverlay enabled={parcelsEnabled} />}
+          {/* GpxOverlay and MapHoverMarker render above parcel layer so track click/hover work. */}
           <GpxOverlay
             baseUrl={baseUrl}
             files={files}

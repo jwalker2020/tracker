@@ -47,6 +47,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
   const [fitToSelectionTrigger, setFitToSelectionTrigger] = useState(0);
   const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP_ID);
   const [hillshadeMode, setHillshadeMode] = useState<HillshadeMode>(DEFAULT_HILLSHADE_MODE);
+  const [parcelsEnabled, setParcelsEnabled] = useState(false);
 
   const refetch = useCallback(async () => {
     setError(undefined);
@@ -199,6 +200,19 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
             ))}
           </select>
         </section>
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-slate-100">Overlays</h2>
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={parcelsEnabled}
+              onChange={(e) => setParcelsEnabled(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-600 focus:ring-sky-500"
+              aria-label="Toggle NH Parcels overlay"
+            />
+            <span className="text-xs text-slate-200">NH Parcels</span>
+          </label>
+        </section>
       </aside>
       <div className="min-w-0 flex-1">
         <MapView
@@ -209,6 +223,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
           onBasemapIdChange={setBasemapId}
           hillshadeMode={hillshadeMode}
           onHillshadeModeChange={setHillshadeMode}
+          parcelsEnabled={parcelsEnabled}
           className="h-full"
         />
       </div>
