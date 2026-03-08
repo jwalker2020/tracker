@@ -14,4 +14,8 @@ function getPocketBaseUrl() {
 
 const pocketBaseClient = new PocketBase(getPocketBaseUrl());
 
+// Allow background requests (e.g. checkpoint saves after POST /api/gpx/enrich returns)
+// to complete; otherwise the SDK cancels in-flight requests when the HTTP response is sent.
+pocketBaseClient.autoCancellation(false);
+
 export default pocketBaseClient;

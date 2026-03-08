@@ -1,10 +1,19 @@
 import { NextResponse } from "next/server";
 import pb from "@/lib/pocketbase";
-import { enrichGpxWithDem } from "@/lib/dem";
+import { enrichGpxWithDem, type EnrichmentResumeState } from "@/lib/dem";
 import { createJob, getProgress, setProgress } from "@/app/api/gpx/enrichment-progress/store";
+import {
+  createCheckpointRecord,
+  getResumableCheckpoint,
+  markCheckpointCompleted,
+  markCheckpointFailed,
+  saveCheckpoint,
+  type EnrichmentCheckpointRecord,
+} from "@/app/api/gpx/enrichment-checkpoint";
 
 const COLLECTION = "gpx_files";
 const DEM_LOG_INTERVAL_MS = 10_000;
+const CHUNK_SIZE = 10_000;
 
 function demLog(msg: string): void {
   try {
@@ -14,7 +23,7 @@ function demLog(msg: string): void {
   }
 }
 
-function startProgressLogging(jobId: string): void {
+function startProgressLogging(jobId: string, isResume: boolean = false): void {
   const startMs = Date.now();
   const formatHhMmSs = (totalSeconds: number): string => {
     const h = Math.floor(totalSeconds / 3600);
@@ -22,7 +31,7 @@ function startProgressLogging(jobId: string): void {
     const s = totalSeconds % 60;
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   };
-  demLog("Enrichment job started");
+  demLog(isResume ? "Enrichment job resuming from checkpoint" : "Enrichment job started");
   const intervalId = setInterval(() => {
     const p = getProgress(jobId);
     if (!p) {
@@ -58,7 +67,38 @@ function startProgressLogging(jobId: string): void {
   }, DEM_LOG_INTERVAL_MS);
 }
 
-async function runEnrichmentInBackground(recordId: string, jobId: string): Promise<void> {
+function buildResumeStateFromCheckpoint(c: EnrichmentCheckpointRecord): EnrichmentResumeState {
+  let profileSoFar: { d: number; e: number }[] = [];
+  if (c.profileJson) {
+    try {
+      profileSoFar = JSON.parse(c.profileJson) as { d: number; e: number }[];
+    } catch {
+      profileSoFar = [];
+    }
+  }
+  return {
+    nextPointIndex: c.nextPointIndex,
+    totalPoints: c.totalPoints,
+    distanceM: c.distanceM ?? 0,
+    chunkSize: c.chunkSize,
+    accumulatedState: {
+      minElevationM: c.minElevationM ?? 0,
+      maxElevationM: c.maxElevationM ?? 0,
+      totalAscentM: c.totalAscentM ?? 0,
+      totalDescentM: c.totalDescentM ?? 0,
+      validCount: c.validCount ?? 0,
+      priorElevationM: c.priorElevationM ?? null,
+    },
+    profileSoFar,
+  };
+}
+
+async function runEnrichmentInBackground(
+  recordId: string,
+  jobId: string,
+  resumeCheckpoint: EnrichmentCheckpointRecord | null,
+  checkpointRecordId: string | null
+): Promise<void> {
   const demBasePath = process.env.DEM_BASE_PATH?.trim();
   const baseUrl = process.env.NEXT_PUBLIC_PB_URL ?? "";
 
@@ -91,11 +131,27 @@ async function runEnrichmentInBackground(recordId: string, jobId: string): Promi
       return;
     }
 
+    const resumeState =
+      resumeCheckpoint && resumeCheckpoint.nextPointIndex > 0
+        ? buildResumeStateFromCheckpoint(resumeCheckpoint)
+        : undefined;
+
     const result = await enrichGpxWithDem(gpxText, {
       demBasePath,
       manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
       onProgress: ({ processedPoints, totalPoints, percentComplete }) => {
         setProgress(jobId, { processedPoints, totalPoints, percentComplete });
+      },
+      resumeState,
+      onCheckpoint: (payload) => {
+        demLog(`Checkpoint save: ${payload.processedPoints}/${payload.totalPoints} (id=${checkpointRecordId ?? "lookup"})`);
+        Promise.resolve(saveCheckpoint(pb, recordId, jobId, payload, checkpointRecordId)).catch(
+          (e: unknown) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            const data = (e as { data?: Record<string, unknown> })?.data;
+            demLog(`Checkpoint save failed: ${msg}${data ? " " + JSON.stringify(data) : ""}`);
+          }
+        );
       },
     });
 
@@ -110,9 +166,15 @@ async function runEnrichmentInBackground(recordId: string, jobId: string): Promi
               ? "All samples were nodata or out of extent."
               : "No elevation data from DEM for this track.";
       setProgress(jobId, { status: "failed", error: reason, percentComplete: 100 });
+      try {
+        await markCheckpointFailed(pb, recordId, jobId, reason, true);
+      } catch (e) {
+        console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+      }
       return;
     }
 
+    demLog("Saving enrichment results to record...");
     const update: Record<string, unknown> = {
       minElevationM: stats.minElevationM,
       maxElevationM: stats.maxElevationM,
@@ -125,16 +187,28 @@ async function runEnrichmentInBackground(recordId: string, jobId: string): Promi
       update.elevationProfileJson = JSON.stringify(profile);
     }
     await pb.collection(COLLECTION).update(recordId, update);
+    try {
+      await markCheckpointCompleted(pb, recordId, jobId);
+    } catch (e) {
+      console.warn("[gpx/enrich] Checkpoint mark completed failed:", e);
+    }
+    const totalCount = stats.totalCount;
     setProgress(jobId, {
       status: "completed",
-      processedPoints: result.elevations.length,
-      totalPoints: result.elevations.length,
+      processedPoints: totalCount,
+      totalPoints: totalCount,
       percentComplete: 100,
     });
+    demLog("Enrichment results saved. Job completed.");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[gpx/enrich] background job", err);
     setProgress(jobId, { status: "failed", error: message, percentComplete: 100 });
+    try {
+      await markCheckpointFailed(pb, recordId, jobId, message, true);
+    } catch (e) {
+      console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+    }
   }
 }
 
@@ -168,11 +242,76 @@ export async function POST(request: Request) {
   }
 
   if (startAsync) {
-    const jobId = createJob();
-    startProgressLogging(jobId);
-    // Run in same context as this handler so progress store is shared with the logging interval and GET handler.
-    void runEnrichmentInBackground(id, jobId);
-    return NextResponse.json({ ok: true, jobId });
+    let checkpoint: Awaited<ReturnType<typeof getResumableCheckpoint>> = null;
+    try {
+      checkpoint = await getResumableCheckpoint(pb, id);
+    } catch (e) {
+      console.warn("[gpx/enrich] Checkpoint lookup failed (run migrations?):", e);
+    }
+    let jobId: string;
+    let isResume: boolean;
+    let checkpointRecordId: string | null = null;
+    const HEARTBEAT_MAX_AGE_MS = 90_000;
+
+    if (checkpoint) {
+      jobId = checkpoint.jobId;
+      checkpointRecordId = checkpoint.id;
+      const heartbeatMs = checkpoint.lastHeartbeatAt
+        ? Date.now() - new Date(checkpoint.lastHeartbeatAt).getTime()
+        : Infinity;
+      const alreadyRunning =
+        checkpoint.status === "running" && Number.isFinite(heartbeatMs) && heartbeatMs < HEARTBEAT_MAX_AGE_MS;
+
+      if (alreadyRunning) {
+        setProgress(jobId, {
+          status: "running",
+          processedPoints: checkpoint.processedPoints,
+          totalPoints: checkpoint.totalPoints,
+          percentComplete:
+            (checkpoint.totalPoints ?? 0) > 0
+              ? Math.min(100, Math.round(((checkpoint.processedPoints ?? 0) / (checkpoint.totalPoints ?? 1)) * 100))
+              : 0,
+        });
+        startProgressLogging(jobId, false);
+        return NextResponse.json({ ok: true, jobId, resumed: false });
+      }
+
+      isResume = checkpoint.nextPointIndex > 0;
+      setProgress(jobId, {
+        status: "running",
+        processedPoints: checkpoint.processedPoints,
+        totalPoints: checkpoint.totalPoints,
+        percentComplete:
+          (checkpoint.totalPoints ?? 0) > 0
+            ? Math.min(100, Math.round(((checkpoint.processedPoints ?? 0) / (checkpoint.totalPoints ?? 1)) * 100))
+            : 0,
+      });
+    } else {
+      jobId = createJob();
+      isResume = false;
+      try {
+        const created = await createCheckpointRecord(pb, {
+          jobId,
+          recordId: id,
+          totalPoints: 0,
+          chunkSize: CHUNK_SIZE,
+        });
+        checkpointRecordId = created.id;
+        demLog(`Checkpoint record created: ${created.id}`);
+      } catch (e: unknown) {
+        const err = e as {
+          response?: { message?: string; data?: Record<string, unknown> };
+          data?: Record<string, unknown>;
+          message?: string;
+        };
+        const detail = err?.response?.data ?? err?.data ?? err?.response?.message ?? err?.message ?? e;
+        console.warn("[gpx/enrich] Checkpoint record create failed:", JSON.stringify(detail, null, 2));
+      }
+    }
+
+    startProgressLogging(jobId, isResume);
+    void runEnrichmentInBackground(id, jobId, isResume ? checkpoint : null, checkpointRecordId);
+    return NextResponse.json({ ok: true, jobId, resumed: isResume });
   }
 
   let record: { file: string };

@@ -5,7 +5,12 @@ import type { DemTileIndex, ElevationStats } from "./types";
 import { findIntersectingTiles, boundsToWgs84Bbox } from "./intersect";
 import { loadTileIndex } from "./tile-index";
 import { DemRasterSampler } from "./sampler";
-import { computeElevationStatsWithDistance, isValidElevation } from "./elevation-stats";
+import {
+  computeElevationStatsWithDistance,
+  isValidElevation,
+  mergeChunkElevationState,
+  type AccumulatedElevationState,
+} from "./elevation-stats";
 import { extractPointsAndBounds } from "./gpx-extract";
 
 /** Resample track to this spacing (meters) before grade/elevation stats to reduce noise. */
@@ -31,6 +36,32 @@ export type DemEnrichmentProgressCallback = (data: {
   percentComplete: number;
 }) => void;
 
+/** Resume state from a saved checkpoint (lightweight, no full point arrays). */
+export type EnrichmentResumeState = {
+  nextPointIndex: number;
+  totalPoints: number;
+  distanceM: number;
+  chunkSize: number;
+  accumulatedState: AccumulatedElevationState;
+  /** Downsampled profile points accumulated so far. */
+  profileSoFar: ElevationProfilePoint[];
+};
+
+/** Payload passed to onCheckpoint after each chunk (for persistence). */
+export type EnrichmentCheckpointPayload = {
+  totalPoints: number;
+  processedPoints: number;
+  nextPointIndex: number;
+  minElevationM: number | null;
+  maxElevationM: number | null;
+  totalAscentM: number;
+  totalDescentM: number;
+  distanceM: number;
+  priorElevationM: number | null;
+  validCount: number;
+  profileJson: string | null;
+};
+
 export type DemEnrichmentConfig = {
   /** Path to folder containing DEM tiles (and manifest). */
   demBasePath: string;
@@ -38,6 +69,10 @@ export type DemEnrichmentConfig = {
   manifestPath?: string;
   /** Optional progress callback during sampling (processedPoints, totalPoints, percentComplete). */
   onProgress?: DemEnrichmentProgressCallback;
+  /** Optional resume state from a saved checkpoint. */
+  resumeState?: EnrichmentResumeState;
+  /** Optional checkpoint callback; called after each chunk with payload to persist. */
+  onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
 };
 
 /** Lightweight profile: cumulative distance (m) and elevation (m) per point. */
@@ -120,17 +155,41 @@ export async function enrichGpxWithDem(
     demBasePath: config.demBasePath,
     manifestPath: config.manifestPath,
   });
-  return enrichGpxWithDemFromIndex(gpxText, index, config.onProgress);
+  return enrichGpxWithDemFromIndex(gpxText, index, {
+    onProgress: config.onProgress,
+    resumeState: config.resumeState,
+    onCheckpoint: config.onCheckpoint,
+  });
 }
+
+const CHUNK_SIZE = 10_000;
+const PROFILE_DOWNSAMPLE = 500;
+
+function safeDivide(num: number, denom: number): number {
+  if (!Number.isFinite(num) || !Number.isFinite(denom) || denom <= 0) return 0;
+  const q = num / denom;
+  return Number.isFinite(q) ? q : 0;
+}
+
+type EnrichFromIndexOptions = {
+  onProgress?: DemEnrichmentProgressCallback;
+  resumeState?: EnrichmentResumeState;
+  onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
+};
 
 /**
  * Enrich using a preloaded tile index (e.g. for tests or repeated use).
+ * Supports resume from checkpoint and chunked processing with bounded memory.
  */
 export async function enrichGpxWithDemFromIndex(
   gpxText: string,
   index: DemTileIndex,
-  onProgress?: DemEnrichmentProgressCallback
+  options?: DemEnrichmentProgressCallback | EnrichFromIndexOptions
 ): Promise<ElevationEnrichmentResult> {
+  const onProgress = typeof options === "function" ? options : options?.onProgress;
+  const resumeState = typeof options === "object" ? options?.resumeState : undefined;
+  const onCheckpoint = typeof options === "object" ? options?.onCheckpoint : undefined;
+
   const { points, bounds } = extractPointsAndBounds(gpxText);
   if (points.length === 0) {
     return { ...EMPTY_RESULT };
@@ -208,7 +267,29 @@ export async function enrichGpxWithDemFromIndex(
       : points;
 
   const totalPoints = pointsToSample.length;
-  const latestProgress = { processedPoints: 0, totalPoints, percentComplete: 0 };
+  const segmentLength = safeDistanceM / Math.max(1, totalPoints - 1);
+
+  let startIndex = 0;
+  let accumulatedState: AccumulatedElevationState;
+  let profileSoFar: ElevationProfilePoint[];
+
+  if (resumeState && resumeState.nextPointIndex > 0 && resumeState.nextPointIndex < totalPoints) {
+    startIndex = resumeState.nextPointIndex;
+    accumulatedState = { ...resumeState.accumulatedState };
+    profileSoFar = [...resumeState.profileSoFar];
+  } else {
+    accumulatedState = {
+      minElevationM: 0,
+      maxElevationM: 0,
+      totalAscentM: 0,
+      totalDescentM: 0,
+      validCount: 0,
+      priorElevationM: null,
+    };
+    profileSoFar = [];
+  }
+
+  const latestProgress = { processedPoints: startIndex, totalPoints, percentComplete: 0 };
   const reportProgress = (processed: number): void => {
     const pct = totalPoints > 0 ? Math.min(100, Math.round((processed / totalPoints) * 100)) : 0;
     latestProgress.processedPoints = processed;
@@ -217,7 +298,7 @@ export async function enrichGpxWithDemFromIndex(
       onProgress({ processedPoints: processed, totalPoints, percentComplete: pct });
     }
   };
-  reportProgress(0);
+  reportProgress(startIndex);
 
   const startTimeMs = Date.now();
   const LOG_INTERVAL_MS = 10_000;
@@ -228,7 +309,6 @@ export async function enrichGpxWithDemFromIndex(
       console.warn("[DEM]", msg);
     }
   };
-  demLog(`Enrichment started: ${totalPoints.toLocaleString()} points`);
   const formatHhMmSs = (totalSeconds: number): string => {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -253,66 +333,95 @@ export async function enrichGpxWithDemFromIndex(
     );
   };
   const progressLogIntervalId = setInterval(logProgress, LOG_INTERVAL_MS);
-  logProgress();
 
-  const elevations: (number | null)[] = [];
   const progressInterval = Math.max(1, Math.floor(totalPoints / 100));
+
   try {
-  for (let i = 0; i < pointsToSample.length; i++) {
-    const [lat, lng] = pointsToSample[i]!;
-    let value: number | null = null;
-    for (const open of openTiles) {
-      const sample = await sampler.sample(open, lng, lat);
-      if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
-        value = sample.elevationM;
-        break;
+    for (let chunkStart = startIndex; chunkStart < totalPoints; chunkStart += CHUNK_SIZE) {
+      const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalPoints);
+      const chunkElevations: (number | null)[] = [];
+
+      for (let i = chunkStart; i < chunkEnd; i++) {
+        const [lat, lng] = pointsToSample[i]!;
+        let value: number | null = null;
+        for (const open of openTiles) {
+          const sample = await sampler.sample(open, lng, lat);
+          if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
+            value = sample.elevationM;
+            break;
+          }
+        }
+        chunkElevations.push(value);
+
+        const cumDist = Math.round((i * segmentLength) * 10) / 10;
+        const e = value != null && isValidElevation(value) ? Math.round(value * 10) / 10 : 0;
+        if (i % PROFILE_DOWNSAMPLE === 0 || i === totalPoints - 1) {
+          profileSoFar.push({ d: cumDist, e });
+        }
+
+        const processed = i + 1;
+        if (processed % progressInterval === 0 || processed === totalPoints) {
+          reportProgress(processed);
+        }
+      }
+
+      accumulatedState = mergeChunkElevationState(accumulatedState, chunkElevations);
+
+      const payload: EnrichmentCheckpointPayload = {
+        totalPoints,
+        processedPoints: chunkEnd,
+        nextPointIndex: chunkEnd,
+        minElevationM: accumulatedState.validCount > 0 ? accumulatedState.minElevationM : null,
+        maxElevationM: accumulatedState.validCount > 0 ? accumulatedState.maxElevationM : null,
+        totalAscentM: accumulatedState.totalAscentM,
+        totalDescentM: accumulatedState.totalDescentM,
+        distanceM: safeDistanceM,
+        priorElevationM: accumulatedState.priorElevationM,
+        validCount: accumulatedState.validCount,
+        profileJson: profileSoFar.length > 0 ? JSON.stringify(profileSoFar) : null,
+      };
+      if (onCheckpoint) {
+        void Promise.resolve(onCheckpoint(payload));
       }
     }
-    elevations.push(value);
-    if ((i + 1) % progressInterval === 0 || i === pointsToSample.length - 1) {
-      reportProgress(i + 1);
-    }
-  }
   } finally {
     clearInterval(progressLogIntervalId);
   }
 
+  const elapsedSec = Math.floor((Date.now() - startTimeMs) / 1000);
   demLog(
-    `Enrichment completed: ${totalPoints.toLocaleString()} points in ${formatHhMmSs(Math.floor((Date.now() - startTimeMs) / 1000))}`
+    `Enrichment completed: ${totalPoints.toLocaleString()} points in ${formatHhMmSs(elapsedSec)}`
   );
 
   sampler.closeAll();
 
-  const stats = computeElevationStatsWithDistance(elevations, safeDistanceM);
+  const averageGradePct = safeDivide(accumulatedState.totalAscentM, safeDistanceM) * 100;
+  const stats: ElevationStats = {
+    minElevationM: accumulatedState.minElevationM,
+    maxElevationM: accumulatedState.maxElevationM,
+    totalAscentM: accumulatedState.totalAscentM,
+    totalDescentM: accumulatedState.totalDescentM,
+    averageGradePct,
+    validCount: accumulatedState.validCount,
+    totalCount: totalPoints,
+  };
   const hint =
-    stats.validCount === 0
+    accumulatedState.validCount === 0
       ? ("all_nodata" as const)
       : undefined;
   if (hint) {
     console.warn(
       "[DEM] All",
-      pointsToSample.length,
+      totalPoints,
       "samples were nodata or out of extent. Check tile CRS and that track is inside tile bounds."
     );
-  }
-
-  const profile: ElevationProfilePoint[] = [];
-  const segmentLength = safeDistanceM / Math.max(1, pointsToSample.length - 1);
-  let cumDist = 0;
-  for (let i = 0; i < pointsToSample.length; i++) {
-    if (i > 0) cumDist += segmentLength;
-    const e = elevations[i];
-    profile.push({
-      d: Math.round(cumDist * 10) / 10,
-      e: isValidElevation(e) ? Math.round(e * 10) / 10 : 0,
-    });
   }
 
   return {
     stats,
     distanceM: safeDistanceM,
-    elevations,
-    profile: profile.length > 0 ? profile : undefined,
+    elevations: [],
+    profile: profileSoFar.length > 0 ? profileSoFar : undefined,
     elevationHint: hint,
   };
 }

@@ -86,3 +86,65 @@ export function computeElevationStatsWithDistance(
   const averageGradePct = safeDivide(stats.totalAscentM, safeDistance) * 100;
   return { ...stats, averageGradePct };
 }
+
+/** Accumulated state for incremental (chunked) stats. Used for resume/checkpoint. */
+export type AccumulatedElevationState = {
+  minElevationM: number;
+  maxElevationM: number;
+  totalAscentM: number;
+  totalDescentM: number;
+  validCount: number;
+  /** Last valid elevation in the previous chunk (for ascent/descent continuity). */
+  priorElevationM: number | null;
+};
+
+/**
+ * Merge a chunk of elevations into accumulated state.
+ * Preserves ascent/descent correctness across chunk boundaries using priorElevationM.
+ * Returns updated state; priorElevationM in result is the last valid elevation in the chunk.
+ */
+export function mergeChunkElevationState(
+  prev: AccumulatedElevationState,
+  chunkElevations: ReadonlyArray<ElevationValue>
+): AccumulatedElevationState {
+  if (chunkElevations.length === 0) {
+    return { ...prev };
+  }
+  const validInChunk = chunkElevations.filter(isValidElevation);
+  let min = prev.minElevationM;
+  let max = prev.maxElevationM;
+  if (validInChunk.length > 0) {
+    const chunkMin = Math.min(...validInChunk);
+    const chunkMax = Math.max(...validInChunk);
+    if (prev.validCount === 0) {
+      min = chunkMin;
+      max = chunkMax;
+    } else {
+      min = Math.min(prev.minElevationM, chunkMin);
+      max = Math.max(prev.maxElevationM, chunkMax);
+    }
+  }
+  let totalAscentM = prev.totalAscentM;
+  let totalDescentM = prev.totalDescentM;
+  let prior = prev.priorElevationM;
+  for (let i = 0; i < chunkElevations.length; i++) {
+    const curr = chunkElevations[i];
+    if (!isValidElevation(curr)) continue;
+    if (prior != null && Number.isFinite(prior)) {
+      const d = curr - prior;
+      if (Number.isFinite(d)) {
+        if (d > 0) totalAscentM += d;
+        else totalDescentM += -d;
+      }
+    }
+    prior = curr;
+  }
+  return {
+    minElevationM: min,
+    maxElevationM: max,
+    totalAscentM,
+    totalDescentM,
+    validCount: prev.validCount + validInChunk.length,
+    priorElevationM: prior,
+  };
+}
