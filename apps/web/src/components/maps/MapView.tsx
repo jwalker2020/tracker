@@ -5,6 +5,10 @@ import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 import { getDisplayGeometry } from "@/lib/gpx";
+import {
+  formatDistanceMiles,
+  formatElevationFt,
+} from "@/lib/units";
 
 import "leaflet/dist/leaflet.css";
 
@@ -34,6 +38,51 @@ type TrackLayerRef = {
   trackIndex: number;
   name: string;
 };
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildTrackPopupContent(
+  trackName: string,
+  rec: GpxFileRecordForDisplay
+): string {
+  const hasEnrichment =
+    rec.distanceFt != null ||
+    rec.minElevationFt != null ||
+    rec.maxElevationFt != null ||
+    rec.totalAscentFt != null ||
+    rec.totalDescentFt != null;
+
+  let html = `<div class="min-w-[200px] rounded border border-slate-700 bg-slate-900 p-3 text-left shadow"><div class="font-semibold text-slate-100 text-sm">${escapeHtml(trackName)}</div>`;
+  if (hasEnrichment) {
+    html += `<div class="mt-2 space-y-1 text-xs text-slate-300">`;
+    if (rec.distanceFt != null) {
+      html += `<div>Distance: ${escapeHtml(formatDistanceMiles(rec.distanceFt))}</div>`;
+    }
+    if (rec.minElevationFt != null) {
+      html += `<div>Min Elevation: ${escapeHtml(formatElevationFt(rec.minElevationFt))}</div>`;
+    }
+    if (rec.maxElevationFt != null) {
+      html += `<div>Max Elevation: ${escapeHtml(formatElevationFt(rec.maxElevationFt))}</div>`;
+    }
+    if (rec.totalAscentFt != null) {
+      html += `<div>Total Ascent: ${escapeHtml(formatElevationFt(rec.totalAscentFt))}</div>`;
+    }
+    if (rec.totalDescentFt != null) {
+      html += `<div>Total Descent: ${escapeHtml(formatElevationFt(rec.totalDescentFt))}</div>`;
+    }
+    html += `</div>`;
+  } else {
+    html += `<div class="mt-2 text-xs text-slate-400">Elevation data not available</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
 
 function parseBoundsJson(boundsJson: string): L.LatLngBounds | null {
   try {
@@ -127,7 +176,9 @@ function GpxOverlay({
             opacity: 0,
             interactive: true,
           });
-          hitPoly.bindPopup(track.name);
+          hitPoly.bindPopup(buildTrackPopupContent(track.name, rec), {
+            className: "track-details-popup",
+          });
           hitPoly.on("click", (e) => {
             L.DomEvent.stopPropagation(e);
             setSelectedTrack({ fileId: rec.id, trackIndex });

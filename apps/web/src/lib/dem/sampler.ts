@@ -127,8 +127,11 @@ export class DemRasterSampler {
     const toProjected = proj4(WGS84, meta.crs);
     const [x, y] = toProjected.forward([lonWgs84, latWgs84]);
 
-    const pixelX = (x - origin[0]) / resolution[0];
-    const pixelY = (origin[1] - y) / resolution[1];
+    // resolution[1] is often negative (image Y increases downward); use abs so pixel Y increases southward
+    const resX = resolution[0];
+    const resY = Math.abs(resolution[1]);
+    const pixelX = (x - origin[0]) / resX;
+    const pixelY = (origin[1] - y) / resY;
 
     const ix = Math.floor(pixelX);
     const iy = Math.floor(pixelY);
