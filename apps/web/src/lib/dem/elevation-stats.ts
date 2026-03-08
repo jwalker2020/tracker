@@ -120,26 +120,18 @@ export function mergeChunkElevationState(
   if (chunkElevations.length === 0) {
     return { ...prev };
   }
-  const validInChunk = chunkElevations.filter(isValidElevation);
-  let min = prev.minElevationM;
-  let max = prev.maxElevationM;
-  if (validInChunk.length > 0) {
-    const chunkMin = Math.min(...validInChunk);
-    const chunkMax = Math.max(...validInChunk);
-    if (prev.validCount === 0) {
-      min = chunkMin;
-      max = chunkMax;
-    } else {
-      min = Math.min(prev.minElevationM, chunkMin);
-      max = Math.max(prev.maxElevationM, chunkMax);
-    }
-  }
+  let chunkMin = Infinity;
+  let chunkMax = -Infinity;
+  let validCountChunk = 0;
   let totalAscentM = prev.totalAscentM;
   let totalDescentM = prev.totalDescentM;
   let prior = prev.priorElevationM;
   for (let i = 0; i < chunkElevations.length; i++) {
     const curr = chunkElevations[i];
-    if (!isValidElevation(curr)) continue;
+    if (curr == null || typeof curr !== "number" || !Number.isFinite(curr)) continue;
+    validCountChunk++;
+    if (curr < chunkMin) chunkMin = curr;
+    if (curr > chunkMax) chunkMax = curr;
     if (prior != null && Number.isFinite(prior)) {
       const d = curr - prior;
       if (Number.isFinite(d)) {
@@ -149,12 +141,23 @@ export function mergeChunkElevationState(
     }
     prior = curr;
   }
+  let min = prev.minElevationM;
+  let max = prev.maxElevationM;
+  if (validCountChunk > 0) {
+    if (prev.validCount === 0) {
+      min = chunkMin;
+      max = chunkMax;
+    } else {
+      min = Math.min(prev.minElevationM, chunkMin);
+      max = Math.max(prev.maxElevationM, chunkMax);
+    }
+  }
   return {
     minElevationM: min,
     maxElevationM: max,
     totalAscentM,
     totalDescentM,
-    validCount: prev.validCount + validInChunk.length,
+    validCount: prev.validCount + validCountChunk,
     priorElevationM: prior,
   };
 }

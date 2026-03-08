@@ -24,6 +24,8 @@ type OpenTile = {
   width: number;
   height: number;
   nodata: number | null;
+  /** Cached WGS84 → raster CRS transform to avoid repeated proj4() in hot path. */
+  toProjected: (lonlat: [number, number]) => [number, number];
 };
 
 /**
@@ -99,6 +101,8 @@ export class DemRasterSampler {
     const width = image.getWidth();
     const height = image.getHeight();
     const nodata = meta.nodata ?? null;
+    const proj = proj4(WGS84, meta.crs);
+    const toProjected = (lonlat: [number, number]) => proj.forward(lonlat);
 
     const open: OpenTile = {
       meta,
@@ -108,6 +112,7 @@ export class DemRasterSampler {
       width,
       height,
       nodata,
+      toProjected,
     };
     this.openTiles.set(path, open);
     return open;
@@ -124,10 +129,9 @@ export class DemRasterSampler {
    * Sample elevation at WGS84 (longitude, latitude). Returns null if out of extent or nodata.
    */
   async sample(tile: OpenTile, lonWgs84: number, latWgs84: number): Promise<ElevationSample> {
-    const { meta, origin, resolution, width, height, nodata } = tile;
+    const { origin, resolution, width, height, nodata, toProjected } = tile;
 
-    const toProjected = proj4(WGS84, meta.crs);
-    const [x, y] = toProjected.forward([lonWgs84, latWgs84]);
+    const [x, y] = toProjected([lonWgs84, latWgs84]);
 
     // resolution[1] is often negative (image Y increases downward); use abs so pixel Y increases southward
     const resX = resolution[0];

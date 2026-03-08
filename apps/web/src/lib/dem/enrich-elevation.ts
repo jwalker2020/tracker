@@ -178,12 +178,30 @@ type EnrichFromIndexOptions = {
   onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
 };
 
+/** Point with optional elevation: [lat, lng] or [lat, lng, ele]. */
+type PointWithOptionalEle = [number, number, number?];
+
+/** Return the first open tile whose bbox contains (lng, lat), or null. */
+function findTileContainingPoint(
+  openTiles: NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>[],
+  lng: number,
+  lat: number
+): (NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>) | null {
+  for (let t = 0; t < openTiles.length; t++) {
+    const open = openTiles[t]!;
+    const [west, south, east, north] = open.meta.bbox;
+    if (lng >= west && lng <= east && lat >= south && lat <= north) return open;
+  }
+  return null;
+}
+
 /**
  * Enrich a single track (points + bounds) with DEM. Used by both whole-GPX and per-track flows.
  * Supports resume and checkpoint when options are provided.
+ * Points may include optional elevation ([lat, lng, ele]); when valid, DEM sampling is skipped for that point.
  */
 export async function enrichSingleTrackFromIndex(
-  points: Array<[number, number]>,
+  points: PointWithOptionalEle[],
   bounds: { south: number; west: number; north: number; east: number },
   index: DemTileIndex,
   options?: EnrichFromIndexOptions
@@ -194,7 +212,7 @@ export async function enrichSingleTrackFromIndex(
 
   if (points.length === 0) return { ...EMPTY_RESULT };
 
-  const line = lineString(points.map(([lat, lng]) => [lng, lat]));
+  const line = lineString(points.map((p) => [p[1], p[0]]));
   const distanceM = length(line, { units: "meters" });
   const safeDistanceM = Number.isFinite(distanceM) && distanceM >= 0 ? distanceM : 0;
   const bbox = boundsToWgs84Bbox(bounds);
@@ -215,10 +233,12 @@ export async function enrichSingleTrackFromIndex(
 
   const sampler = new DemRasterSampler(index.basePath);
   const openTiles: NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>[] = [];
+  const t0 = Date.now();
   for (const meta of tiles) {
     const open = await sampler.openTile(meta);
     if (open != null) openTiles.push(open);
   }
+  const tileOpenMs = Date.now() - t0;
 
   if (openTiles.length === 0) {
     const pathMod = await import("node:path");
@@ -252,7 +272,8 @@ export async function enrichSingleTrackFromIndex(
     onProgress({ processedPoints: 0, totalPoints: estimatedTotal, percentComplete: 0 });
   }
 
-  const pointsToSample =
+  /** Resampled [lat, lng][] or raw points with optional [lat, lng, ele]. */
+  const pointsToSample: PointWithOptionalEle[] =
     safeDistanceM > 0 && points.length > 1
       ? await resampleLineToFixedSpacing(line, safeDistanceM, RESAMPLE_SPACING_M, (processed, total) => {
           if (onProgress) {
@@ -332,25 +353,42 @@ export async function enrichSingleTrackFromIndex(
 
   const progressInterval = Math.max(1, Math.floor(totalPoints / 100));
 
+  const samplingStartMs = Date.now();
+
   try {
     for (let chunkStart = startIndex; chunkStart < totalPoints; chunkStart += CHUNK_SIZE) {
       const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalPoints);
-      const chunkElevations: (number | null)[] = [];
+      const chunkLen = chunkEnd - chunkStart;
+      const chunkElevations: (number | null)[] = new Array(chunkLen);
 
       for (let i = chunkStart; i < chunkEnd; i++) {
-        const [lat, lng] = pointsToSample[i]!;
-        let value: number | null = null;
-        for (const open of openTiles) {
-          const sample = await sampler.sample(open, lng, lat);
-          if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
-            value = sample.elevationM;
-            break;
+        const pt = pointsToSample[i]!;
+        const lat = pt[0];
+        const lng = pt[1];
+        const rawEle = pt.length >= 3 ? pt[2] : undefined;
+        const hasValidEle =
+          typeof rawEle === "number" && Number.isFinite(rawEle);
+        let value: number | null = hasValidEle ? (rawEle as number) : null;
+        if (!hasValidEle) {
+          const tile = findTileContainingPoint(openTiles, lng, lat);
+          if (tile) {
+            const sample = await sampler.sample(tile, lng, lat);
+            if (sample.elevationM != null && isValidElevation(sample.elevationM)) value = sample.elevationM;
+          }
+          if (value == null) {
+            for (const open of openTiles) {
+              const sample = await sampler.sample(open, lng, lat);
+              if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
+                value = sample.elevationM;
+                break;
+              }
+            }
           }
         }
-        chunkElevations.push(value);
+        chunkElevations[i - chunkStart] = value;
 
         const cumDist = Math.round((i * segmentLength) * 10) / 10;
-        const e = value != null && isValidElevation(value) ? Math.round(value * 10) / 10 : 0;
+        const e = value != null ? Math.round(value * 10) / 10 : 0;
         profileSoFar.push({ d: cumDist, e, lat, lng });
 
         const processed = i + 1;
@@ -382,9 +420,10 @@ export async function enrichSingleTrackFromIndex(
     clearInterval(progressLogIntervalId);
   }
 
+  const samplingMs = Date.now() - samplingStartMs;
   const elapsedSec = Math.floor((Date.now() - startTimeMs) / 1000);
   demLog(
-    `Enrichment completed: ${totalPoints.toLocaleString()} points in ${formatHhMmSs(elapsedSec)}`
+    `Enrichment completed: ${totalPoints.toLocaleString()} points in ${formatHhMmSs(elapsedSec)} (tileOpen=${tileOpenMs}ms sampling=${samplingMs}ms)`
   );
 
   sampler.closeAll();
@@ -515,7 +554,7 @@ const M_PER_MI = 1609.344;
  * Straight ≈ 0; winding = higher. Noise: segments < 2 m and turns < 2° are excluded.
  */
 function computeCurvinessDegPerMile(
-  points: Array<[number, number]>,
+  points: PointWithOptionalEle[],
   distanceM: number
 ): number {
   if (points.length < 3) return 0;
@@ -523,7 +562,7 @@ function computeCurvinessDegPerMile(
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const toDeg = (rad: number) => (rad * 180) / Math.PI;
 
-  const line = lineString(points.map(([lat, lng]) => [lng, lat]));
+  const line = lineString(points.map((p) => [p[1], p[0]]));
   const pathLengthM = length(line, { units: "meters" });
   const safeDistanceM =
     Number.isFinite(pathLengthM) && pathLengthM > 0 ? pathLengthM : distanceM;
@@ -556,9 +595,12 @@ function computeCurvinessDegPerMile(
     const a = points[i - 1]!;
     const b = points[i]!;
     const c = points[i + 1]!;
-    const [latA, lonA] = a;
-    const [latB, lonB] = b;
-    const [latC, lonC] = c;
+    const latA = a[0];
+    const lonA = a[1];
+    const latB = b[0];
+    const lonB = b[1];
+    const latC = c[0];
+    const lonC = c[1];
     if (
       !Number.isFinite(latA) ||
       !Number.isFinite(lonA) ||
