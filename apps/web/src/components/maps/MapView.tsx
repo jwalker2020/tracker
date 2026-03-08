@@ -5,11 +5,8 @@ import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 import { getDisplayGeometry } from "@/lib/gpx";
-import {
-  formatDistanceMiles,
-  formatElevationFt,
-} from "@/lib/units";
 import { getLatLngForIndex, TrackElevationProfile, type ProfilePoint } from "@/components/gpx/TrackElevationProfile";
+import { TrackDetailsPanel } from "@/components/gpx/TrackDetailsPanel";
 import { MapHoverMarker } from "@/components/maps/MapHoverMarker";
 
 import "leaflet/dist/leaflet.css";
@@ -40,53 +37,6 @@ type TrackLayerRef = {
   trackIndex: number;
   name: string;
 };
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function buildTrackPopupContent(
-  trackName: string,
-  trackIndex: number,
-  rec: GpxFileRecordForDisplay
-): string {
-  const track = rec.enrichedTracks?.[trackIndex];
-  const hasEnrichment =
-    track &&
-    (track.validCount > 0 ||
-      track.distanceFt > 0 ||
-      track.totalAscentFt > 0 ||
-      track.totalDescentFt > 0);
-
-  let html = `<div class="min-w-[200px] rounded border border-slate-700 bg-slate-900 p-3 text-left shadow"><div class="font-semibold text-slate-100 text-sm">${escapeHtml(trackName)}</div>`;
-  if (hasEnrichment && track) {
-    html += `<div class="mt-2 space-y-1 text-xs text-slate-300">`;
-    html += `<div>Distance: ${escapeHtml(formatDistanceMiles(track.distanceFt))}</div>`;
-    html += `<div>Min Elevation: ${escapeHtml(formatElevationFt(track.minElevationFt))}</div>`;
-    html += `<div>Max Elevation: ${escapeHtml(formatElevationFt(track.maxElevationFt))}</div>`;
-    html += `<div>Total Ascent: ${escapeHtml(formatElevationFt(track.totalAscentFt))}</div>`;
-    html += `<div>Total Descent: ${escapeHtml(formatElevationFt(track.totalDescentFt))}</div>`;
-    const gradePct =
-      typeof track.averageGradePct === "number" && Number.isFinite(track.averageGradePct)
-        ? track.averageGradePct
-        : 0;
-    html += `<div>Avg Grade: ${escapeHtml(gradePct.toFixed(2))}%</div>`;
-    const steepnessPct =
-      typeof track.averageSteepnessPct === "number" && Number.isFinite(track.averageSteepnessPct)
-        ? track.averageSteepnessPct
-        : 0;
-    html += `<div>Avg Steepness: ${escapeHtml(steepnessPct.toFixed(2))}%</div>`;
-    html += `</div>`;
-  } else {
-    html += `<div class="mt-2 text-xs text-slate-400">Elevation data not available</div>`;
-  }
-  html += `</div>`;
-  return html;
-}
 
 function parseBoundsJson(boundsJson: string): L.LatLngBounds | null {
   try {
@@ -180,13 +130,9 @@ function GpxOverlay({
             opacity: 0,
             interactive: true,
           });
-          hitPoly.bindPopup(buildTrackPopupContent(track.name, trackIndex, rec), {
-            className: "track-details-popup",
-          });
           hitPoly.on("click", (e) => {
             L.DomEvent.stopPropagation(e);
             setSelectedTrack({ fileId: rec.id, trackIndex });
-            hitPoly.openPopup();
           });
           overlay.addLayer(poly);
           overlay.addLayer(hitPoly);
@@ -213,8 +159,6 @@ function GpxOverlay({
       const visibleWeight = isSelected ? SELECTED_WEIGHT : VISIBLE_WEIGHT;
       ref.poly.setStyle({ weight: visibleWeight });
       ref.hitPoly.setStyle({ weight: visibleWeight * 2 });
-      if (isSelected) ref.hitPoly.openPopup();
-      else ref.hitPoly.closePopup();
     }
   }, [selectedTrack]);
 
@@ -283,7 +227,7 @@ export function MapView({
     const track = file?.enrichedTracks?.[selectedTrack.trackIndex];
     if (!track) return null;
     const profilePoints = parseProfileJson(track.elevationProfileJson);
-    return { trackName: track.name, profilePoints };
+    return { trackName: track.name, profilePoints, track };
   }, [files, selectedTrack]);
 
   const onHoverIndex = useCallback((index: number | null) => {
@@ -340,19 +284,33 @@ export function MapView({
         </div>
       </div>
       {selectedTrack && (
-        <div className="h-[220px] shrink-0 border-t border-slate-700 bg-slate-900/98">
-          {selectedProfile ? (
-            <TrackElevationProfile
-              trackName={selectedProfile.trackName}
-              profilePoints={selectedProfile.profilePoints}
-              trackPoints={selectedTrackPoints}
-              onHoverIndex={onHoverIndex}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm text-slate-400">
-              Elevation profile not available for this track.
-            </div>
-          )}
+        <div className="flex h-[220px] shrink-0 gap-0 border-t border-slate-700 bg-slate-900/98 overflow-hidden">
+          <div className="w-[280px] shrink-0 border-r border-slate-700 p-2 flex flex-col min-h-0">
+            {selectedProfile ? (
+              <TrackDetailsPanel
+                trackName={selectedProfile.trackName}
+                track={selectedProfile.track}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                Track details not available.
+              </div>
+            )}
+          </div>
+          <div className="min-w-0 flex-1 p-2 flex flex-col">
+            {selectedProfile ? (
+              <TrackElevationProfile
+                trackName={selectedProfile.trackName}
+                profilePoints={selectedProfile.profilePoints}
+                trackPoints={selectedTrackPoints}
+                onHoverIndex={onHoverIndex}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                Elevation profile not available for this track.
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
