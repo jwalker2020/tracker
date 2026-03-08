@@ -6,14 +6,20 @@ import L from "leaflet";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 import { getDisplayGeometry } from "@/lib/gpx";
 import { DEFAULT_BASEMAP_ID, getBasemapById } from "@/lib/maps/basemaps";
+import {
+  DEFAULT_OVERLAY_OPACITY,
+  getHillshadeLayerById,
+  type HillshadeMode,
+} from "@/lib/maps/overlays";
 import { getLatLngForIndex, TrackElevationProfile, type ProfilePoint } from "@/components/gpx/TrackElevationProfile";
 import { TrackDetailsPanel } from "@/components/gpx/TrackDetailsPanel";
 import { MapHoverMarker } from "@/components/maps/MapHoverMarker";
 
 import "leaflet/dist/leaflet.css";
 
-const DEFAULT_CENTER: [number, number] = [39.8283, -98.5795];
-const DEFAULT_ZOOM = 4;
+/** Initial map view: center of New Hampshire. */
+const DEFAULT_CENTER: [number, number] = [43.9, -71.6];
+const DEFAULT_ZOOM = 8;
 
 /** Fallback tile url/attribution so TileLayer never receives undefined (avoids .length on undefined). */
 const FALLBACK_TILE_URL =
@@ -28,6 +34,9 @@ type MapViewProps = {
   /** When provided with onBasemapIdChange, basemap is controlled by parent (picker rendered outside MapView). */
   basemapId?: string;
   onBasemapIdChange?: (id: string) => void;
+  /** Which hillshade overlay to show: none | usgs | esri. Renders above basemap, below tracks. */
+  hillshadeMode?: HillshadeMode;
+  onHillshadeModeChange?: (mode: HillshadeMode) => void;
 };
 
 type LeafletPolyline = import("leaflet").Polyline;
@@ -203,11 +212,17 @@ export function MapView({
   className = "",
   basemapId: controlledBasemapId,
   onBasemapIdChange,
+  hillshadeMode: controlledHillshadeMode,
+  onHillshadeModeChange,
 }: MapViewProps) {
   const files = filesProp ?? [];
   const [internalBasemapId, setInternalBasemapId] = useState<string>(DEFAULT_BASEMAP_ID);
   const basemapId = controlledBasemapId ?? internalBasemapId;
   const setBasemapId = onBasemapIdChange ?? setInternalBasemapId;
+  const [internalHillshadeMode, setInternalHillshadeMode] = useState<HillshadeMode>("none");
+  const hillshadeMode = onHillshadeModeChange ? controlledHillshadeMode ?? "none" : internalHillshadeMode;
+  const setHillshadeMode = onHillshadeModeChange ?? setInternalHillshadeMode;
+  const hillshadeLayer = getHillshadeLayerById(hillshadeMode);
   const basemap =
     getBasemapById(basemapId) ??
     getBasemapById(DEFAULT_BASEMAP_ID) ?? {
@@ -291,6 +306,17 @@ export function MapView({
             maxZoom={basemap.maxZoom}
             {...(basemap.subdomains != null ? { subdomains: basemap.subdomains } : {})}
           />
+          {hillshadeLayer && (
+            <TileLayer
+              key={`hillshade-${hillshadeMode}`}
+              url={hillshadeLayer.url}
+              attribution={hillshadeLayer.attribution}
+              opacity={hillshadeLayer.opacity ?? DEFAULT_OVERLAY_OPACITY}
+              maxZoom={hillshadeLayer.maxZoom}
+              zIndex={1}
+            />
+          )}
+          {/* GpxOverlay and MapHoverMarker render above tile layers (overlay pane) so track click/hover work. */}
           <GpxOverlay
             baseUrl={baseUrl}
             files={files}

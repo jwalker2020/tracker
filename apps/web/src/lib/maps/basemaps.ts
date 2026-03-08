@@ -13,19 +13,19 @@ export type BasemapConfig = {
 
 export const BASEMAPS: BasemapConfig[] = [
   {
+    id: "usgs",
+    name: "USGS Topo",
+    url: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",
+    attribution: "USGS",
+    maxZoom: 16,
+  },
+  {
     id: "osm",
     name: "OpenStreetMap",
     url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     attribution: "© OpenStreetMap contributors",
     maxZoom: 19,
     subdomains: "abc",
-  },
-  {
-    id: "usgs",
-    name: "USGS Topo",
-    url: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",
-    attribution: "USGS",
-    maxZoom: 16,
   },
   {
     id: "esri-imagery",
@@ -63,5 +63,5 @@ export function isValidBasemapId(id: string): boolean {
   return ID_SET.has(id);
 }
 
-/** Default basemap id (OpenStreetMap). */
-export const DEFAULT_BASEMAP_ID = "osm";
+/** Default basemap id (USGS Topo). */
+export const DEFAULT_BASEMAP_ID = "usgs";

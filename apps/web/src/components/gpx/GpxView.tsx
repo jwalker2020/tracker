@@ -4,6 +4,20 @@ import { useCallback, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 import { BASEMAPS, DEFAULT_BASEMAP_ID } from "@/lib/maps/basemaps";
+import {
+  DEFAULT_HILLSHADE_MODE,
+  HILLSHADE_LAYERS,
+  type HillshadeMode,
+} from "@/lib/maps/overlays";
+
+/** Default hillshade mode when user switches basemap. OSM gets ESRI hillshade; others get none. */
+const HILLSHADE_FOR_BASEMAP: Record<string, HillshadeMode> = {
+  osm: "esri",
+  usgs: "none",
+  "esri-imagery": "none",
+  "carto-positron": "none",
+  "stamen-terrain": "none",
+};
 import pb from "@/lib/pocketbase";
 import { GpxUploadForm } from "./GpxUploadForm";
 import { GpxFileList } from "./GpxFileList";
@@ -32,6 +46,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
   const [error, setError] = useState<string | undefined>(initialError);
   const [fitToSelectionTrigger, setFitToSelectionTrigger] = useState(0);
   const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP_ID);
+  const [hillshadeMode, setHillshadeMode] = useState<HillshadeMode>(DEFAULT_HILLSHADE_MODE);
 
   const refetch = useCallback(async () => {
     setError(undefined);
@@ -153,13 +168,33 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
           <h2 className="mb-2 text-sm font-semibold text-slate-100">Basemap</h2>
           <select
             value={basemapId}
-            onChange={(e) => setBasemapId(e.target.value)}
+            onChange={(e) => {
+              const newBasemapId = e.target.value;
+              setBasemapId(newBasemapId);
+              setHillshadeMode(HILLSHADE_FOR_BASEMAP[newBasemapId] ?? "none");
+            }}
             className="w-full rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs font-medium text-slate-200 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
             aria-label="Select basemap"
           >
             {BASEMAPS.map((bm) => (
               <option key={bm.id} value={bm.id}>
                 {bm.name}
+              </option>
+            ))}
+          </select>
+        </section>
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-slate-100">Hillshade</h2>
+          <select
+            value={hillshadeMode}
+            onChange={(e) => setHillshadeMode(e.target.value as HillshadeMode)}
+            className="w-full rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs font-medium text-slate-200 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            aria-label="Select hillshade overlay"
+          >
+            <option value="none">None</option>
+            {HILLSHADE_LAYERS.map((layer) => (
+              <option key={layer.id} value={layer.id}>
+                {layer.name}
               </option>
             ))}
           </select>
@@ -172,6 +207,8 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
           fitToSelectionTrigger={fitToSelectionTrigger}
           basemapId={basemapId}
           onBasemapIdChange={setBasemapId}
+          hillshadeMode={hillshadeMode}
+          onHillshadeModeChange={setHillshadeMode}
           className="h-full"
         />
       </div>
