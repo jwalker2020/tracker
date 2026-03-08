@@ -49,33 +49,35 @@ function escapeHtml(s: string): string {
 
 function buildTrackPopupContent(
   trackName: string,
+  trackIndex: number,
   rec: GpxFileRecordForDisplay
 ): string {
+  const track = rec.enrichedTracks?.[trackIndex];
   const hasEnrichment =
-    rec.distanceFt != null ||
-    rec.minElevationFt != null ||
-    rec.maxElevationFt != null ||
-    rec.totalAscentFt != null ||
-    rec.totalDescentFt != null;
+    track &&
+    (track.validCount > 0 ||
+      track.distanceFt > 0 ||
+      track.totalAscentFt > 0 ||
+      track.totalDescentFt > 0);
 
   let html = `<div class="min-w-[200px] rounded border border-slate-700 bg-slate-900 p-3 text-left shadow"><div class="font-semibold text-slate-100 text-sm">${escapeHtml(trackName)}</div>`;
-  if (hasEnrichment) {
+  if (hasEnrichment && track) {
     html += `<div class="mt-2 space-y-1 text-xs text-slate-300">`;
-    if (rec.distanceFt != null) {
-      html += `<div>Distance: ${escapeHtml(formatDistanceMiles(rec.distanceFt))}</div>`;
-    }
-    if (rec.minElevationFt != null) {
-      html += `<div>Min Elevation: ${escapeHtml(formatElevationFt(rec.minElevationFt))}</div>`;
-    }
-    if (rec.maxElevationFt != null) {
-      html += `<div>Max Elevation: ${escapeHtml(formatElevationFt(rec.maxElevationFt))}</div>`;
-    }
-    if (rec.totalAscentFt != null) {
-      html += `<div>Total Ascent: ${escapeHtml(formatElevationFt(rec.totalAscentFt))}</div>`;
-    }
-    if (rec.totalDescentFt != null) {
-      html += `<div>Total Descent: ${escapeHtml(formatElevationFt(rec.totalDescentFt))}</div>`;
-    }
+    html += `<div>Distance: ${escapeHtml(formatDistanceMiles(track.distanceFt))}</div>`;
+    html += `<div>Min Elevation: ${escapeHtml(formatElevationFt(track.minElevationFt))}</div>`;
+    html += `<div>Max Elevation: ${escapeHtml(formatElevationFt(track.maxElevationFt))}</div>`;
+    html += `<div>Total Ascent: ${escapeHtml(formatElevationFt(track.totalAscentFt))}</div>`;
+    html += `<div>Total Descent: ${escapeHtml(formatElevationFt(track.totalDescentFt))}</div>`;
+    const gradePct =
+      typeof track.averageGradePct === "number" && Number.isFinite(track.averageGradePct)
+        ? track.averageGradePct
+        : 0;
+    html += `<div>Avg Grade: ${escapeHtml(gradePct.toFixed(2))}%</div>`;
+    const steepnessPct =
+      typeof track.averageSteepnessPct === "number" && Number.isFinite(track.averageSteepnessPct)
+        ? track.averageSteepnessPct
+        : 0;
+    html += `<div>Avg Steepness: ${escapeHtml(steepnessPct.toFixed(2))}%</div>`;
     html += `</div>`;
   } else {
     html += `<div class="mt-2 text-xs text-slate-400">Elevation data not available</div>`;
@@ -176,7 +178,7 @@ function GpxOverlay({
             opacity: 0,
             interactive: true,
           });
-          hitPoly.bindPopup(buildTrackPopupContent(track.name, rec), {
+          hitPoly.bindPopup(buildTrackPopupContent(track.name, trackIndex, rec), {
             className: "track-details-popup",
           });
           hitPoly.on("click", (e) => {

@@ -11,10 +11,11 @@ import {
   mergeChunkElevationState,
   type AccumulatedElevationState,
 } from "./elevation-stats";
-import { extractPointsAndBounds } from "./gpx-extract";
+import type { EnrichedTrackSummary } from "./types";
+import { extractPointsAndBounds, extractTracks } from "./gpx-extract";
 
-/** Resample track to this spacing (meters) before grade/elevation stats to reduce noise. */
-const RESAMPLE_SPACING_M = 10;
+/** Resample track to this spacing (meters) before grade/elevation stats. Finer spacing captures more ascent/descent; coarser smooths noise. */
+const RESAMPLE_SPACING_M = 5;
 
 const EMPTY_RESULT: ElevationEnrichmentResult = {
   stats: {
@@ -23,6 +24,7 @@ const EMPTY_RESULT: ElevationEnrichmentResult = {
     totalAscentM: 0,
     totalDescentM: 0,
     averageGradePct: 0,
+    averageSteepnessPct: 0,
     validCount: 0,
     totalCount: 0,
   },
@@ -178,29 +180,24 @@ type EnrichFromIndexOptions = {
 };
 
 /**
- * Enrich using a preloaded tile index (e.g. for tests or repeated use).
- * Supports resume from checkpoint and chunked processing with bounded memory.
+ * Enrich a single track (points + bounds) with DEM. Used by both whole-GPX and per-track flows.
+ * Supports resume and checkpoint when options are provided.
  */
-export async function enrichGpxWithDemFromIndex(
-  gpxText: string,
+export async function enrichSingleTrackFromIndex(
+  points: Array<[number, number]>,
+  bounds: { south: number; west: number; north: number; east: number },
   index: DemTileIndex,
-  options?: DemEnrichmentProgressCallback | EnrichFromIndexOptions
+  options?: EnrichFromIndexOptions
 ): Promise<ElevationEnrichmentResult> {
-  const onProgress = typeof options === "function" ? options : options?.onProgress;
-  const resumeState = typeof options === "object" ? options?.resumeState : undefined;
-  const onCheckpoint = typeof options === "object" ? options?.onCheckpoint : undefined;
+  const onProgress = options?.onProgress;
+  const resumeState = options?.resumeState;
+  const onCheckpoint = options?.onCheckpoint;
 
-  const { points, bounds } = extractPointsAndBounds(gpxText);
-  if (points.length === 0) {
-    return { ...EMPTY_RESULT };
-  }
+  if (points.length === 0) return { ...EMPTY_RESULT };
 
-  const line = lineString(
-    points.map(([lat, lng]) => [lng, lat])
-  );
+  const line = lineString(points.map(([lat, lng]) => [lng, lat]));
   const distanceM = length(line, { units: "meters" });
   const safeDistanceM = Number.isFinite(distanceM) && distanceM >= 0 ? distanceM : 0;
-
   const bbox = boundsToWgs84Bbox(bounds);
   const tiles = findIntersectingTiles(index.tiles, bbox);
 
@@ -395,13 +392,22 @@ export async function enrichGpxWithDemFromIndex(
 
   sampler.closeAll();
 
-  const averageGradePct = safeDivide(accumulatedState.totalAscentM, safeDistanceM) * 100;
+  // Signed average grade = (totalAscent - totalDescent) / horizontal distance × 100 (negative for net descent).
+  // Average steepness = (totalAscent + totalDescent) / horizontal distance × 100 (all segments, always ≥ 0).
+  // Zero distance or non-finite totals yield 0; segments with missing elevation are already excluded from ascent/descent.
+  const netElevationM = accumulatedState.totalAscentM - accumulatedState.totalDescentM;
+  const totalClimbM = accumulatedState.totalAscentM + accumulatedState.totalDescentM;
+  const rawGrade = safeDistanceM > 0 ? (netElevationM / safeDistanceM) * 100 : 0;
+  const rawSteepness = safeDistanceM > 0 ? (totalClimbM / safeDistanceM) * 100 : 0;
+  const averageGradePct = Number.isFinite(rawGrade) ? rawGrade : 0;
+  const averageSteepnessPct = Number.isFinite(rawSteepness) ? rawSteepness : 0;
   const stats: ElevationStats = {
     minElevationM: accumulatedState.minElevationM,
     maxElevationM: accumulatedState.maxElevationM,
     totalAscentM: accumulatedState.totalAscentM,
     totalDescentM: accumulatedState.totalDescentM,
     averageGradePct,
+    averageSteepnessPct,
     validCount: accumulatedState.validCount,
     totalCount: totalPoints,
   };
@@ -424,4 +430,168 @@ export async function enrichGpxWithDemFromIndex(
     profile: profileSoFar.length > 0 ? profileSoFar : undefined,
     elevationHint: hint,
   };
+}
+
+/**
+ * Enrich using a preloaded tile index (single combined track from whole GPX).
+ * Supports resume from checkpoint and chunked processing with bounded memory.
+ */
+export async function enrichGpxWithDemFromIndex(
+  gpxText: string,
+  index: DemTileIndex,
+  options?: DemEnrichmentProgressCallback | EnrichFromIndexOptions
+): Promise<ElevationEnrichmentResult> {
+  const { points, bounds } = extractPointsAndBounds(gpxText);
+  if (points.length === 0) return { ...EMPTY_RESULT };
+  const opts = typeof options === "function" ? { onProgress: options } : options;
+  return enrichSingleTrackFromIndex(points, bounds, index, opts);
+}
+
+/** Aggregate file-level stats from per-track enrichment. */
+export type EnrichmentAggregates = {
+  distanceM: number;
+  minElevationM: number;
+  maxElevationM: number;
+  totalAscentM: number;
+  totalDescentM: number;
+  averageGradePct: number;
+  averageSteepnessPct: number;
+};
+
+function computeAggregates(tracks: EnrichedTrackSummary[]): EnrichmentAggregates {
+  if (tracks.length === 0) {
+    return {
+      distanceM: 0,
+      minElevationM: 0,
+      maxElevationM: 0,
+      totalAscentM: 0,
+      totalDescentM: 0,
+      averageGradePct: 0,
+      averageSteepnessPct: 0,
+    };
+  }
+  let distanceM = 0;
+  let totalAscentM = 0;
+  let totalDescentM = 0;
+  let minElevationM = Infinity;
+  let maxElevationM = -Infinity;
+  for (const t of tracks) {
+    distanceM += t.distanceM;
+    totalAscentM += t.totalAscentM;
+    totalDescentM += t.totalDescentM;
+    if (t.validCount > 0) {
+      minElevationM = Math.min(minElevationM, t.minElevationM);
+      maxElevationM = Math.max(maxElevationM, t.maxElevationM);
+    }
+  }
+  const netElevationM = totalAscentM - totalDescentM;
+  const totalClimbM = totalAscentM + totalDescentM;
+  const rawGrade = distanceM > 0 ? (netElevationM / distanceM) * 100 : 0;
+  const rawSteepness = distanceM > 0 ? (totalClimbM / distanceM) * 100 : 0;
+  const averageGradePct = Number.isFinite(rawGrade) ? rawGrade : 0;
+  const averageSteepnessPct = Number.isFinite(rawSteepness) ? rawSteepness : 0;
+  return {
+    distanceM,
+    minElevationM: Number.isFinite(minElevationM) ? minElevationM : 0,
+    maxElevationM: Number.isFinite(maxElevationM) ? maxElevationM : 0,
+    totalAscentM,
+    totalDescentM,
+    averageGradePct,
+    averageSteepnessPct,
+  };
+}
+
+function toEnrichedTrackSummary(
+  track: import("./gpx-extract").ExtractedTrack,
+  result: ElevationEnrichmentResult
+): EnrichedTrackSummary {
+  const { bounds } = track;
+  const centerLat = (bounds.south + bounds.north) / 2;
+  const centerLng = (bounds.west + bounds.east) / 2;
+  return {
+    trackIndex: track.trackIndex,
+    name: track.name,
+    pointCount: result.stats.totalCount,
+    bounds: track.bounds,
+    centerLat,
+    centerLng,
+    distanceM: result.distanceM,
+    minElevationM: result.stats.minElevationM,
+    maxElevationM: result.stats.maxElevationM,
+    totalAscentM: result.stats.totalAscentM,
+    totalDescentM: result.stats.totalDescentM,
+    averageGradePct: result.stats.averageGradePct,
+    averageSteepnessPct: result.stats.averageSteepnessPct,
+    validCount: result.stats.validCount,
+    elevationProfileJson:
+      result.profile && result.profile.length > 0 ? JSON.stringify(result.profile) : null,
+  };
+}
+
+export type PerTrackEnrichmentResult = {
+  enrichedTracks: EnrichedTrackSummary[];
+  aggregates: EnrichmentAggregates;
+};
+
+/**
+ * Enrich each track in the GPX separately and return per-track results plus file-level aggregates.
+ * Progress reports overall points processed across all tracks.
+ */
+export async function enrichGpxWithDemPerTrack(
+  gpxText: string,
+  config: DemEnrichmentConfig
+): Promise<PerTrackEnrichmentResult> {
+  const tracks = extractTracks(gpxText);
+  if (tracks.length === 0) {
+    return {
+      enrichedTracks: [],
+      aggregates: computeAggregates([]),
+    };
+  }
+
+  const index = await loadTileIndex({
+    demBasePath: config.demBasePath,
+    manifestPath: config.manifestPath,
+  });
+
+  const totalPointsEstimate = tracks.reduce((s, t) => s + t.points.length, 0);
+  let completedPoints = 0;
+  const enrichedTracks: EnrichedTrackSummary[] = [];
+
+  const demLog = (msg: string): void => {
+    try {
+      process.stderr.write(`[DEM] ${msg}\n`);
+    } catch {
+      console.warn("[DEM]", msg);
+    }
+  };
+
+  for (let i = 0; i < tracks.length; i++) {
+    const track = tracks[i]!;
+    const progressOffset = completedPoints;
+    const onProgress =
+      config.onProgress &&
+      ((data: { processedPoints: number; totalPoints: number; percentComplete: number }) => {
+        const globalProcessed = progressOffset + data.processedPoints;
+        const pct =
+          totalPointsEstimate > 0
+            ? Math.min(100, Math.round((globalProcessed / totalPointsEstimate) * 100))
+            : 0;
+        config.onProgress!({
+          processedPoints: globalProcessed,
+          totalPoints: totalPointsEstimate,
+          percentComplete: pct,
+        });
+      });
+
+    demLog(`Enriching track ${i + 1}/${tracks.length}: ${track.name}`);
+    const result = await enrichSingleTrackFromIndex(track.points, track.bounds, index, {
+      onProgress,
+    });
+    enrichedTracks.push(toEnrichedTrackSummary(track, result));
+    completedPoints += result.stats.totalCount;
+  }
+
+  const aggregates = computeAggregates(enrichedTracks);
+  return { enrichedTracks, aggregates };
 }

@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import pb from "@/lib/pocketbase";
-import { enrichGpxWithDem, type EnrichmentResumeState } from "@/lib/dem";
+import { enrichGpxWithDemPerTrack } from "@/lib/dem";
 import { createJob, getProgress, setProgress } from "@/app/api/gpx/enrichment-progress/store";
 import {
   createCheckpointRecord,
   getResumableCheckpoint,
   markCheckpointCompleted,
   markCheckpointFailed,
-  saveCheckpoint,
-  type EnrichmentCheckpointRecord,
 } from "@/app/api/gpx/enrichment-checkpoint";
 
 const COLLECTION = "gpx_files";
@@ -67,36 +65,9 @@ function startProgressLogging(jobId: string, isResume: boolean = false): void {
   }, DEM_LOG_INTERVAL_MS);
 }
 
-function buildResumeStateFromCheckpoint(c: EnrichmentCheckpointRecord): EnrichmentResumeState {
-  let profileSoFar: { d: number; e: number }[] = [];
-  if (c.profileJson) {
-    try {
-      profileSoFar = JSON.parse(c.profileJson) as { d: number; e: number }[];
-    } catch {
-      profileSoFar = [];
-    }
-  }
-  return {
-    nextPointIndex: c.nextPointIndex,
-    totalPoints: c.totalPoints,
-    distanceM: c.distanceM ?? 0,
-    chunkSize: c.chunkSize,
-    accumulatedState: {
-      minElevationM: c.minElevationM ?? 0,
-      maxElevationM: c.maxElevationM ?? 0,
-      totalAscentM: c.totalAscentM ?? 0,
-      totalDescentM: c.totalDescentM ?? 0,
-      validCount: c.validCount ?? 0,
-      priorElevationM: c.priorElevationM ?? null,
-    },
-    profileSoFar,
-  };
-}
-
 async function runEnrichmentInBackground(
   recordId: string,
   jobId: string,
-  resumeCheckpoint: EnrichmentCheckpointRecord | null,
   checkpointRecordId: string | null
 ): Promise<void> {
   const demBasePath = process.env.DEM_BASE_PATH?.trim();
@@ -131,39 +102,27 @@ async function runEnrichmentInBackground(
       return;
     }
 
-    const resumeState =
-      resumeCheckpoint && resumeCheckpoint.nextPointIndex > 0
-        ? buildResumeStateFromCheckpoint(resumeCheckpoint)
-        : undefined;
-
-    const result = await enrichGpxWithDem(gpxText, {
+    const result = await enrichGpxWithDemPerTrack(gpxText, {
       demBasePath,
       manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
       onProgress: ({ processedPoints, totalPoints, percentComplete }) => {
         setProgress(jobId, { processedPoints, totalPoints, percentComplete });
       },
-      resumeState,
-      onCheckpoint: (payload) => {
-        Promise.resolve(saveCheckpoint(pb, recordId, jobId, payload, checkpointRecordId)).catch(
-          (e: unknown) => {
-            const msg = e instanceof Error ? e.message : String(e);
-            const data = (e as { data?: Record<string, unknown> })?.data;
-            demLog(`Checkpoint save failed: ${msg}${data ? " " + JSON.stringify(data) : ""}`);
-          }
-        );
-      },
     });
 
-    const { stats, distanceM, profile, elevationHint } = result;
-    if (stats.validCount === 0) {
-      const reason =
-        elevationHint === "no_intersecting_tiles"
-          ? "No DEM tiles intersect this track."
-          : elevationHint === "no_open_tiles"
-            ? "DEM tile files could not be opened."
-            : elevationHint === "all_nodata"
-              ? "All samples were nodata or out of extent."
-              : "No elevation data from DEM for this track.";
+    const { enrichedTracks, aggregates } = result;
+    const hasAnyValidData = enrichedTracks.some((t) => t.validCount > 0);
+    if (enrichedTracks.length === 0) {
+      setProgress(jobId, { status: "failed", error: "No tracks found in GPX.", percentComplete: 100 });
+      try {
+        await markCheckpointFailed(pb, recordId, jobId, "No tracks found in GPX.", true);
+      } catch (e) {
+        console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+      }
+      return;
+    }
+    if (!hasAnyValidData) {
+      const reason = "All samples were nodata or out of extent for every track.";
       setProgress(jobId, { status: "failed", error: reason, percentComplete: 100 });
       try {
         await markCheckpointFailed(pb, recordId, jobId, reason, true);
@@ -175,23 +134,21 @@ async function runEnrichmentInBackground(
 
     demLog("Saving enrichment results to record...");
     const update: Record<string, unknown> = {
-      minElevationM: stats.minElevationM,
-      maxElevationM: stats.maxElevationM,
-      totalAscentM: stats.totalAscentM,
-      totalDescentM: stats.totalDescentM,
-      averageGradePct: stats.averageGradePct,
-      distanceM,
+      enrichedTracksJson: JSON.stringify(enrichedTracks),
+      distanceM: aggregates.distanceM,
+      minElevationM: aggregates.minElevationM,
+      maxElevationM: aggregates.maxElevationM,
+      totalAscentM: aggregates.totalAscentM,
+      totalDescentM: aggregates.totalDescentM,
+      averageGradePct: aggregates.averageGradePct,
     };
-    if (profile && profile.length > 0) {
-      update.elevationProfileJson = JSON.stringify(profile);
-    }
     await pb.collection(COLLECTION).update(recordId, update);
     try {
       await markCheckpointCompleted(pb, recordId, jobId);
     } catch (e) {
       console.warn("[gpx/enrich] Checkpoint mark completed failed:", e);
     }
-    const totalCount = stats.totalCount;
+    const totalCount = enrichedTracks.reduce((s, t) => s + t.pointCount, 0);
     setProgress(jobId, {
       status: "completed",
       processedPoints: totalCount,
@@ -308,7 +265,7 @@ export async function POST(request: Request) {
     }
 
     startProgressLogging(jobId, isResume);
-    void runEnrichmentInBackground(id, jobId, isResume ? checkpoint : null, checkpointRecordId);
+    void runEnrichmentInBackground(id, jobId, checkpointRecordId);
     return NextResponse.json({ ok: true, jobId, resumed: isResume });
   }
 
@@ -346,9 +303,9 @@ export async function POST(request: Request) {
     });
   }
 
-  let result;
+  let result: Awaited<ReturnType<typeof enrichGpxWithDemPerTrack>>;
   try {
-    result = await enrichGpxWithDem(gpxText, {
+    result = await enrichGpxWithDemPerTrack(gpxText, {
       demBasePath,
       manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
     });
@@ -361,33 +318,28 @@ export async function POST(request: Request) {
     });
   }
 
-  const { stats, distanceM, profile, elevationHint } = result;
-  if (stats.validCount === 0) {
-    const reason =
-      elevationHint === "no_intersecting_tiles"
-        ? "No DEM tiles intersect this track. Is the track inside your DEM coverage (e.g. New Hampshire)?"
-        : elevationHint === "no_open_tiles"
-          ? "DEM tiles intersect but files could not be opened. Check DEM_BASE_PATH and that GeoTIFF files exist."
-          : elevationHint === "all_nodata"
-            ? "Track intersects DEM tiles but all samples were nodata or out of extent. Check tile bounds and CRS."
-            : "No elevation data from DEM for this track (no intersecting tiles or all nodata).";
+  const { enrichedTracks, aggregates } = result;
+  if (enrichedTracks.length === 0) {
+    return NextResponse.json({ ok: true, warning: "No tracks found in GPX." });
+  }
+  const hasAnyValidData = enrichedTracks.some((t) => t.validCount > 0);
+  if (!hasAnyValidData) {
     return NextResponse.json({
       ok: true,
-      warning: reason,
+      warning:
+        "All samples were nodata or out of extent for every track. Is the track inside your DEM coverage (e.g. New Hampshire)?",
     });
   }
 
   const update: Record<string, unknown> = {
-    minElevationM: stats.minElevationM,
-    maxElevationM: stats.maxElevationM,
-    totalAscentM: stats.totalAscentM,
-    totalDescentM: stats.totalDescentM,
-    averageGradePct: stats.averageGradePct,
-    distanceM,
+    enrichedTracksJson: JSON.stringify(enrichedTracks),
+    distanceM: aggregates.distanceM,
+    minElevationM: aggregates.minElevationM,
+    maxElevationM: aggregates.maxElevationM,
+    totalAscentM: aggregates.totalAscentM,
+    totalDescentM: aggregates.totalDescentM,
+    averageGradePct: aggregates.averageGradePct,
   };
-  if (profile && profile.length > 0) {
-    update.elevationProfileJson = JSON.stringify(profile);
-  }
 
   try {
     await pb.collection(COLLECTION).update(id, update);

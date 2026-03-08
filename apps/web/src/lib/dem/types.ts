@@ -48,9 +48,32 @@ export type ElevationStats = {
   maxElevationM: number;
   totalAscentM: number;
   totalDescentM: number;
+  /** Signed average grade: (totalAscent - totalDescent) / horizontalDistance × 100. Negative for net descent. */
   averageGradePct: number;
+  /** Average steepness: (totalAscent + totalDescent) / horizontalDistance × 100. Always ≥ 0; reflects terrain steepness. */
+  averageSteepnessPct: number;
   /** Number of points that had valid elevation. */
   validCount: number;
   /** Total number of points. */
   totalCount: number;
+};
+
+/** Per-track enrichment result (internal: meters). Stored in enrichedTracksJson. */
+export type EnrichedTrackSummary = {
+  trackIndex: number;
+  name: string;
+  pointCount: number;
+  bounds: GpxBoundsLike;
+  centerLat: number;
+  centerLng: number;
+  distanceM: number;
+  minElevationM: number;
+  maxElevationM: number;
+  totalAscentM: number;
+  totalDescentM: number;
+  averageGradePct: number;
+  averageSteepnessPct: number;
+  validCount: number;
+  /** JSON array of { d: distanceM, e: elevationM } for this track only. */
+  elevationProfileJson: string | null;
 };

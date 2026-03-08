@@ -11,6 +11,14 @@ export type GpxPointsAndBounds = {
   bounds: GpxBoundsLike;
 };
 
+/** One track extracted from GPX (trk or rte), with stable index and bounds. */
+export type ExtractedTrack = {
+  trackIndex: number;
+  name: string;
+  points: Array<[number, number]>;
+  bounds: GpxBoundsLike;
+};
+
 const EMPTY: GpxPointsAndBounds = {
   points: [],
   bounds: { south: 0, west: 0, north: 0, east: 0 },
@@ -88,4 +96,85 @@ export function extractPointsAndBounds(gpxText: string): GpxPointsAndBounds {
   };
 
   return { points, bounds };
+}
+
+function computeBounds(points: Array<[number, number]>): GpxBoundsLike {
+  if (points.length === 0) return { south: 0, west: 0, north: 0, east: 0 };
+  let minLat = Infinity, minLng = Infinity, maxLat = -Infinity, maxLng = -Infinity;
+  for (const [lat, lon] of points) {
+    if (isFiniteCoord(lat) && isFiniteLng(lon)) {
+      minLat = Math.min(minLat, lat);
+      minLng = Math.min(minLng, lon);
+      maxLat = Math.max(maxLat, lat);
+      maxLng = Math.max(maxLng, lon);
+    }
+  }
+  return {
+    south: Number.isFinite(minLat) ? minLat : 0,
+    west: Number.isFinite(minLng) ? minLng : 0,
+    north: Number.isFinite(maxLat) ? maxLat : 0,
+    east: Number.isFinite(maxLng) ? maxLng : 0,
+  };
+}
+
+/**
+ * Extract tracks from GPX preserving order and identity. Each trk/rte becomes one ExtractedTrack.
+ */
+export function extractTracks(gpxText: string): ExtractedTrack[] {
+  if (typeof gpxText !== "string" || !gpxText.trim()) return [];
+
+  let doc: Document;
+  try {
+    const parser = new DOMParser();
+    doc = parser.parseFromString(gpxText, "text/xml");
+  } catch {
+    return [];
+  }
+
+  const tracks: ExtractedTrack[] = [];
+  let trackIndex = 0;
+
+  const trks = doc.getElementsByTagName("trk");
+  for (let i = 0; i < trks.length; i++) {
+    const trk = trks.item(i);
+    if (!trk) continue;
+    const nameEl = trk.getElementsByTagName("name").item(0);
+    const name = (nameEl?.textContent ?? "").trim() || `Track ${trackIndex + 1}`;
+    const trkpts = trk.getElementsByTagName("trkpt");
+    const points: Array<[number, number]> = [];
+    for (let j = 0; j < trkpts.length; j++) {
+      const pt = trkpts.item(j);
+      if (!pt) continue;
+      const lat = parseFloatAttr(pt, "lat");
+      const lon = parseFloatAttr(pt, "lon");
+      if (isFiniteCoord(lat) && isFiniteLng(lon)) points.push([lat, lon]);
+    }
+    if (points.length > 0) {
+      tracks.push({ trackIndex, name, points, bounds: computeBounds(points) });
+      trackIndex++;
+    }
+  }
+
+  const rtes = doc.getElementsByTagName("rte");
+  for (let i = 0; i < rtes.length; i++) {
+    const rte = rtes.item(i);
+    if (!rte) continue;
+    const nameEl = rte.getElementsByTagName("name").item(0);
+    const name = (nameEl?.textContent ?? "").trim() || `Route ${trackIndex + 1}`;
+    const rtepts = rte.getElementsByTagName("rtept");
+    const points: Array<[number, number]> = [];
+    for (let j = 0; j < rtepts.length; j++) {
+      const pt = rtepts.item(j);
+      if (!pt) continue;
+      const lat = parseFloatAttr(pt, "lat");
+      const lon = parseFloatAttr(pt, "lon");
+      if (isFiniteCoord(lat) && isFiniteLng(lon)) points.push([lat, lon]);
+    }
+    if (points.length > 0) {
+      tracks.push({ trackIndex, name, points, bounds: computeBounds(points) });
+      trackIndex++;
+    }
+  }
+
+  return tracks;
 }

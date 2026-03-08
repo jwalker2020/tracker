@@ -20,11 +20,32 @@ export type GpxFileRecord = {
   totalDescentM?: number;
   averageGradePct?: number;
   enrichedGeoJson?: string;
-  /** Optional JSON array of { d: distanceM, e: elevationM } from DEM enrichment (internal: meters). */
+  /** Legacy: single combined profile (meters). Prefer enrichedTracksJson. */
   elevationProfileJson?: string;
+  /** Per-track enrichment: JSON array of EnrichedTrackSummary (meters). */
+  enrichedTracksJson?: string;
   sortOrder?: number;
   created: string;
   updated: string;
+};
+
+/** Per-track enrichment for display (feet). */
+export type EnrichedTrackSummaryForDisplay = {
+  trackIndex: number;
+  name: string;
+  pointCount: number;
+  bounds: { south: number; west: number; north: number; east: number };
+  centerLat: number;
+  centerLng: number;
+  distanceFt: number;
+  minElevationFt: number;
+  maxElevationFt: number;
+  totalAscentFt: number;
+  totalDescentFt: number;
+  averageGradePct: number;
+  averageSteepnessPct: number;
+  validCount: number;
+  elevationProfileJson: string | null;
 };
 
 /**
@@ -40,8 +61,8 @@ export type GpxFileRecordForDisplay = Omit<
   maxElevationFt?: number;
   totalAscentFt?: number;
   totalDescentFt?: number;
-  /** JSON array of { d: distanceFt, e: elevationFt } for charts/UI. */
-  elevationProfileJson?: string;
+  /** Per-track enrichment (feet). Use for track popup and filtering. */
+  enrichedTracks?: EnrichedTrackSummaryForDisplay[];
 };
 
 /** Convert internal (meters) record to display (feet) for client/UI. */
@@ -53,6 +74,7 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
     totalAscentM,
     totalDescentM,
     elevationProfileJson,
+    enrichedTracksJson,
     ...rest
   } = record;
   const out: GpxFileRecordForDisplay = {
@@ -63,20 +85,60 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
     ...(totalAscentM != null && { totalAscentFt: metersToFeet(totalAscentM) }),
     ...(totalDescentM != null && { totalDescentFt: metersToFeet(totalDescentM) }),
   };
-  if (elevationProfileJson) {
+
+  if (enrichedTracksJson) {
     try {
-      const profile = JSON.parse(elevationProfileJson) as { d: number; e: number }[];
-      if (Array.isArray(profile)) {
-        out.elevationProfileJson = JSON.stringify(
-          profile.map((p) => ({ d: metersToFeet(p.d), e: metersToFeet(p.e) }))
-        );
-      } else {
-        out.elevationProfileJson = elevationProfileJson;
+      const tracks = JSON.parse(enrichedTracksJson) as Array<{
+        trackIndex: number;
+        name: string;
+        pointCount: number;
+        bounds: { south: number; west: number; north: number; east: number };
+        centerLat: number;
+        centerLng: number;
+        distanceM: number;
+        minElevationM: number;
+        maxElevationM: number;
+        totalAscentM: number;
+        totalDescentM: number;
+        averageGradePct: number;
+        averageSteepnessPct?: number;
+        validCount: number;
+        elevationProfileJson: string | null;
+      }>;
+      if (Array.isArray(tracks)) {
+        out.enrichedTracks = tracks.map((t) => ({
+          trackIndex: t.trackIndex,
+          name: t.name,
+          pointCount: t.pointCount,
+          bounds: t.bounds,
+          centerLat: t.centerLat,
+          centerLng: t.centerLng,
+          distanceFt: metersToFeet(t.distanceM),
+          minElevationFt: metersToFeet(t.minElevationM),
+          maxElevationFt: metersToFeet(t.maxElevationM),
+          totalAscentFt: metersToFeet(t.totalAscentM),
+          totalDescentFt: metersToFeet(t.totalDescentM),
+          averageGradePct: t.averageGradePct,
+          averageSteepnessPct: typeof t.averageSteepnessPct === "number" ? t.averageSteepnessPct : 0,
+          validCount: t.validCount,
+          elevationProfileJson: (() => {
+            if (!t.elevationProfileJson) return null;
+            try {
+              const profile = JSON.parse(t.elevationProfileJson) as { d: number; e: number }[];
+              return JSON.stringify(
+                profile.map((p) => ({ d: metersToFeet(p.d), e: metersToFeet(p.e) }))
+              );
+            } catch {
+              return t.elevationProfileJson;
+            }
+          })(),
+        }));
       }
     } catch {
-      out.elevationProfileJson = elevationProfileJson;
+      // leave enrichedTracks undefined
     }
   }
+
   return out;
 }
 

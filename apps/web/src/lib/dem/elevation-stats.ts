@@ -35,6 +35,7 @@ export function computeElevationStats(
       totalAscentM: 0,
       totalDescentM: 0,
       averageGradePct: 0,
+      averageSteepnessPct: 0,
       validCount: 0,
       totalCount,
     };
@@ -66,14 +67,18 @@ export function computeElevationStats(
     totalAscentM,
     totalDescentM,
     averageGradePct: 0,
+    averageSteepnessPct: 0,
     validCount,
     totalCount,
   };
 }
 
 /**
- * Compute elevation stats and average grade using horizontal distance (meters).
- * Grade = (totalAscentM / horizontalDistanceM) * 100 when distance > 0; else 0.
+ * Compute elevation stats and grade metrics using horizontal distance (meters).
+ * Segments with missing (null) elevation are skipped for ascent/descent; denominator is total horizontal distance.
+ * - averageGradePct: signed grade = (totalAscent - totalDescent) / distance × 100 (negative for net descent).
+ * - averageSteepnessPct: absolute grade = (totalAscent + totalDescent) / distance × 100 (terrain steepness).
+ * Returns 0 for grade/steepness when distance is zero or result is non-finite.
  */
 export function computeElevationStatsWithDistance(
   elevations: ReadonlyArray<ElevationValue>,
@@ -83,8 +88,13 @@ export function computeElevationStatsWithDistance(
   const safeDistance = Number.isFinite(horizontalDistanceM) && horizontalDistanceM > 0
     ? horizontalDistanceM
     : 0;
-  const averageGradePct = safeDivide(stats.totalAscentM, safeDistance) * 100;
-  return { ...stats, averageGradePct };
+  const netElevationM = stats.totalAscentM - stats.totalDescentM;
+  const totalClimbM = stats.totalAscentM + stats.totalDescentM;
+  const rawGrade = safeDistance > 0 ? (netElevationM / safeDistance) * 100 : 0;
+  const rawSteepness = safeDistance > 0 ? (totalClimbM / safeDistance) * 100 : 0;
+  const averageGradePct = Number.isFinite(rawGrade) ? rawGrade : 0;
+  const averageSteepnessPct = Number.isFinite(rawSteepness) ? rawSteepness : 0;
+  return { ...stats, averageGradePct, averageSteepnessPct };
 }
 
 /** Accumulated state for incremental (chunked) stats. Used for resume/checkpoint. */
