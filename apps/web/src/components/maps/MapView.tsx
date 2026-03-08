@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
@@ -9,6 +9,7 @@ import {
   formatDistanceMiles,
   formatElevationFt,
 } from "@/lib/units";
+import { TrackElevationProfile, type ProfilePoint } from "@/components/gpx/TrackElevationProfile";
 
 import "leaflet/dist/leaflet.css";
 
@@ -219,6 +220,24 @@ function GpxOverlay({
   return null;
 }
 
+function parseProfileJson(json: string | null): ProfilePoint[] | null {
+  if (!json || typeof json !== "string") return null;
+  try {
+    const arr = JSON.parse(json) as unknown;
+    if (!Array.isArray(arr)) return null;
+    const points = arr.filter(
+      (p): p is ProfilePoint =>
+        p != null &&
+        typeof p === "object" &&
+        typeof (p as ProfilePoint).d === "number" &&
+        typeof (p as ProfilePoint).e === "number"
+    );
+    return points.length >= 2 ? points : null;
+  } catch {
+    return null;
+  }
+}
+
 export function MapView({
   baseUrl,
   files,
@@ -228,43 +247,68 @@ export function MapView({
   const [basemap, setBasemap] = useState<"osm" | "usgs">("osm");
   const [selectedTrack, setSelectedTrack] = useState<SelectedTrack | null>(null);
 
+  const selectedProfile = useMemo(() => {
+    if (!selectedTrack) return null;
+    const file = files.find((f) => f.id === selectedTrack.fileId);
+    const track = file?.enrichedTracks?.[selectedTrack.trackIndex];
+    if (!track) return null;
+    const profilePoints = parseProfileJson(track.elevationProfileJson);
+    return { trackName: track.name, profilePoints };
+  }, [files, selectedTrack]);
+
   return (
-    <div className={`relative h-full w-full overflow-visible ${className}`}>
-      <MapContainer
-        center={DEFAULT_CENTER}
-        zoom={DEFAULT_ZOOM}
-        className="h-full w-full min-h-[300px] rounded-lg bg-slate-900"
-        style={{ height: "100%", minHeight: 300 }}
-      >
-        <TileLayer
-          key={basemap}
-          url={basemap === "osm" ? OSM_URL : USGS_URL}
-          attribution={basemap === "osm" ? "© OpenStreetMap contributors" : "USGS"}
-        />
-        <GpxOverlay
-          baseUrl={baseUrl}
-          files={files}
-          selectedTrack={selectedTrack}
-          setSelectedTrack={setSelectedTrack}
-        />
-        <FitToSelection files={files} fitToSelectionTrigger={fitToSelectionTrigger} />
-      </MapContainer>
-      <div className="absolute left-2 bottom-12 z-[1000] flex flex-col gap-1 rounded border border-slate-700 bg-slate-900/95 p-1.5 shadow">
-        <button
-          type="button"
-          onClick={() => setBasemap("osm")}
-          className={`rounded px-2 py-1 text-xs font-medium ${basemap === "osm" ? "bg-sky-600 text-white" : "bg-slate-700 text-slate-200 hover:bg-slate-600"}`}
+    <div className={`flex h-full w-full flex-col overflow-visible ${className}`}>
+      <div className="relative min-h-0 flex-1">
+        <MapContainer
+          center={DEFAULT_CENTER}
+          zoom={DEFAULT_ZOOM}
+          className="h-full w-full min-h-[300px] rounded-lg bg-slate-900"
+          style={{ height: "100%", minHeight: 300 }}
         >
-          OpenStreetMap
-        </button>
-        <button
-          type="button"
-          onClick={() => setBasemap("usgs")}
-          className={`rounded px-2 py-1 text-xs font-medium ${basemap === "usgs" ? "bg-sky-600 text-white" : "bg-slate-700 text-slate-200 hover:bg-slate-600"}`}
-        >
-          USGS Topo
-        </button>
+          <TileLayer
+            key={basemap}
+            url={basemap === "osm" ? OSM_URL : USGS_URL}
+            attribution={basemap === "osm" ? "© OpenStreetMap contributors" : "USGS"}
+          />
+          <GpxOverlay
+            baseUrl={baseUrl}
+            files={files}
+            selectedTrack={selectedTrack}
+            setSelectedTrack={setSelectedTrack}
+          />
+          <FitToSelection files={files} fitToSelectionTrigger={fitToSelectionTrigger} />
+        </MapContainer>
+        <div className="absolute left-2 bottom-12 z-[1000] flex flex-col gap-1 rounded border border-slate-700 bg-slate-900/95 p-1.5 shadow">
+          <button
+            type="button"
+            onClick={() => setBasemap("osm")}
+            className={`rounded px-2 py-1 text-xs font-medium ${basemap === "osm" ? "bg-sky-600 text-white" : "bg-slate-700 text-slate-200 hover:bg-slate-600"}`}
+          >
+            OpenStreetMap
+          </button>
+          <button
+            type="button"
+            onClick={() => setBasemap("usgs")}
+            className={`rounded px-2 py-1 text-xs font-medium ${basemap === "usgs" ? "bg-sky-600 text-white" : "bg-slate-700 text-slate-200 hover:bg-slate-600"}`}
+          >
+            USGS Topo
+          </button>
+        </div>
       </div>
+      {selectedTrack && (
+        <div className="h-[220px] shrink-0 border-t border-slate-700 bg-slate-900/98">
+          {selectedProfile ? (
+            <TrackElevationProfile
+              trackName={selectedProfile.trackName}
+              profilePoints={selectedProfile.profilePoints}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-slate-400">
+              Elevation profile not available for this track.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

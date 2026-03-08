@@ -165,7 +165,6 @@ export async function enrichGpxWithDem(
 }
 
 const CHUNK_SIZE = 10_000;
-const PROFILE_DOWNSAMPLE = 500;
 
 function safeDivide(num: number, denom: number): number {
   if (!Number.isFinite(num) || !Number.isFinite(denom) || denom <= 0) return 0;
@@ -352,9 +351,7 @@ export async function enrichSingleTrackFromIndex(
 
         const cumDist = Math.round((i * segmentLength) * 10) / 10;
         const e = value != null && isValidElevation(value) ? Math.round(value * 10) / 10 : 0;
-        if (i % PROFILE_DOWNSAMPLE === 0 || i === totalPoints - 1) {
-          profileSoFar.push({ d: cumDist, e });
-        }
+        profileSoFar.push({ d: cumDist, e });
 
         const processed = i + 1;
         if (processed % progressInterval === 0 || processed === totalPoints) {
@@ -501,6 +498,9 @@ function computeAggregates(tracks: EnrichedTrackSummary[]): EnrichmentAggregates
   };
 }
 
+const M_TO_FT = 3.28084;
+const M_TO_MI = 1 / 1609.344;
+
 function toEnrichedTrackSummary(
   track: import("./gpx-extract").ExtractedTrack,
   result: ElevationEnrichmentResult
@@ -508,6 +508,13 @@ function toEnrichedTrackSummary(
   const { bounds } = track;
   const centerLat = (bounds.south + bounds.north) / 2;
   const centerLng = (bounds.west + bounds.east) / 2;
+  const profileForStorage =
+    result.profile && result.profile.length > 0
+      ? result.profile.map((p) => ({
+          d: Number((p.d * M_TO_MI).toFixed(6)),
+          e: Number((p.e * M_TO_FT).toFixed(2)),
+        }))
+      : null;
   return {
     trackIndex: track.trackIndex,
     name: track.name,
@@ -523,8 +530,7 @@ function toEnrichedTrackSummary(
     averageGradePct: result.stats.averageGradePct,
     averageSteepnessPct: result.stats.averageSteepnessPct,
     validCount: result.stats.validCount,
-    elevationProfileJson:
-      result.profile && result.profile.length > 0 ? JSON.stringify(result.profile) : null,
+    elevationProfileJson: profileForStorage ? JSON.stringify(profileForStorage) : null,
   };
 }
 

@@ -125,9 +125,17 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
             if (!t.elevationProfileJson) return null;
             try {
               const profile = JSON.parse(t.elevationProfileJson) as { d: number; e: number }[];
-              return JSON.stringify(
-                profile.map((p) => ({ d: metersToFeet(p.d), e: metersToFeet(p.e) }))
-              );
+              if (!Array.isArray(profile) || profile.length === 0) return t.elevationProfileJson;
+              const maxD = Math.max(...profile.map((p) => p.d));
+              if (maxD > 20) {
+                return JSON.stringify(
+                  profile.map((p) => ({
+                    d: metersToFeet(p.d) / 5280,
+                    e: metersToFeet(p.e),
+                  }))
+                );
+              }
+              return t.elevationProfileJson;
             } catch {
               return t.elevationProfileJson;
             }
