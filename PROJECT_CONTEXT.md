@@ -17,6 +17,10 @@
 - `src/lib/*` = data access and helpers
 - `src/components/*` = reusable UI
 
+## Units
+- Internal calculations (DEM, Turf, geodesic) use **meters**.
+- User-facing values (elevation, distance) are converted to **feet** when returning data to the client or rendering in the UI (see `src/lib/units.ts` and `gpxRecordToDisplay` in `src/lib/gpx/files.ts`).
+
 ## Rules
 - Use App Router only
 - Do not use `next/router`

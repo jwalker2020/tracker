@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
-import type { GpxFileRecord } from "@/lib/gpx";
+import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 import { getDisplayGeometry } from "@/lib/gpx";
 
 import "leaflet/dist/leaflet.css";
@@ -16,7 +16,7 @@ const USGS_URL =
 
 type MapViewProps = {
   baseUrl: string;
-  files: GpxFileRecord[];
+  files: GpxFileRecordForDisplay[];
   fitToSelectionTrigger?: number;
   className?: string;
 };
@@ -58,7 +58,7 @@ function FitToSelection({
   files,
   fitToSelectionTrigger,
 }: {
-  files: GpxFileRecord[];
+  files: GpxFileRecordForDisplay[];
   fitToSelectionTrigger: number;
 }) {
   const map = useMap();
@@ -86,7 +86,7 @@ function GpxOverlay({
   setSelectedTrack,
 }: {
   baseUrl: string;
-  files: GpxFileRecord[];
+  files: GpxFileRecordForDisplay[];
   selectedTrack: SelectedTrack | null;
   setSelectedTrack: (v: SelectedTrack | null) => void;
 }) {

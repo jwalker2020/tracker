@@ -1,7 +1,9 @@
 import type { Feature, LineString, MultiLineString } from "geojson";
-import type { GpxFileRecord } from "./files";
 import type { GpxTrack } from "./parse";
 import { parseGpx } from "./parse";
+
+/** Record shape needed for fetching display geometry (id, file, optional enrichedGeoJson). */
+export type GpxRecordForGeometry = { id: string; file: string; enrichedGeoJson?: string };
 
 export type DisplayGeometry = {
   tracks: GpxTrack[];
@@ -13,7 +15,7 @@ export type DisplayGeometry = {
  * Single place for "how we get track coordinates for the map" to avoid duplicating parsing.
  */
 export async function getDisplayGeometry(
-  record: GpxFileRecord,
+  record: GpxRecordForGeometry,
   baseUrl: string
 ): Promise<DisplayGeometry> {
   if (record.enrichedGeoJson?.trim()) {

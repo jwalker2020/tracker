@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import dynamic from "next/dynamic";
-import type { GpxFileRecord } from "@/lib/gpx";
+import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 import pb from "@/lib/pocketbase";
 import { GpxUploadForm } from "./GpxUploadForm";
 import { GpxFileList } from "./GpxFileList";
@@ -13,7 +13,7 @@ const MapView = dynamic(() => import("@/components/maps/MapView").then((m) => ({
 });
 
 type GpxViewProps = {
-  initialFiles: GpxFileRecord[];
+  initialFiles: GpxFileRecordForDisplay[];
   baseUrl: string;
   initialError?: string;
 };
@@ -21,7 +21,7 @@ type GpxViewProps = {
 const COLLECTION = "gpx_files";
 
 export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
-  const [files, setFiles] = useState<GpxFileRecord[]>(initialFiles);
+  const [files, setFiles] = useState<GpxFileRecordForDisplay[]>(initialFiles);
   const [orderedFileIds, setOrderedFileIds] = useState<string[]>(() =>
     initialFiles.map((f) => f.id)
   );
@@ -37,7 +37,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
     try {
       const res = await fetch("/api/gpx/files");
       if (!res.ok) throw new Error("Failed to fetch");
-      const list = (await res.json()) as GpxFileRecord[];
+      const list = (await res.json()) as GpxFileRecordForDisplay[];
       setFiles(list);
       setOrderedFileIds(list.map((f) => f.id));
     } catch {
@@ -73,7 +73,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
   const selectedFiles = orderedFileIds
     .filter((id) => selectedIds.has(id))
     .map((id) => files.find((f) => f.id === id))
-    .filter((f): f is GpxFileRecord => f != null);
+    .filter((f): f is GpxFileRecordForDisplay => f != null);
 
   const onReorder = useCallback(
     async (newOrderedIds: string[]) => {

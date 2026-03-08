@@ -1,17 +1,17 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import type { GpxFileRecord } from "@/lib/gpx";
+import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 
 type GpxFileListProps = {
-  files: GpxFileRecord[];
+  files: GpxFileRecordForDisplay[];
   orderedFileIds: string[];
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
   onReorder: (newOrderedIds: string[]) => void;
 };
 
-const filesById = (files: GpxFileRecord[]) =>
+const filesById = (files: GpxFileRecordForDisplay[]) =>
   Object.fromEntries(files.map((f) => [f.id, f]));
 
 function reorderIds(ids: string[], draggedId: string, insertBeforeId: string): string[] {
@@ -41,7 +41,7 @@ export function GpxFileList({
 
   const byId = filesById(files);
   const order = previewOrder ?? orderedFileIds;
-  const ordered = order.map((id) => byId[id]).filter(Boolean) as GpxFileRecord[];
+  const ordered = order.map((id) => byId[id]).filter(Boolean) as GpxFileRecordForDisplay[];
 
   if (ordered.length === 0) {
     return (

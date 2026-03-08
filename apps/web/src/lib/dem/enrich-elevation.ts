@@ -75,12 +75,12 @@ export type DemEnrichmentConfig = {
   onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
 };
 
-/** Lightweight profile: cumulative distance (m) and elevation (m) per point. */
+/** Lightweight profile: cumulative distance (m) and elevation (m) per point. Internal units; convert to feet for UI in gpxRecordToDisplay. */
 export type ElevationProfilePoint = { d: number; e: number };
 
 export type ElevationEnrichmentResult = {
   stats: ElevationStats;
-  /** Total horizontal distance in meters (from Turf length). */
+  /** Total horizontal distance in meters (from Turf length). Internal; convert to feet for display. */
   distanceM: number;
   /** Elevation per point (null = nodata/out of extent). */
   elevations: ReadonlyArray<number | null>;

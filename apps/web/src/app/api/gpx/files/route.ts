@@ -1,4 +1,4 @@
-import { getGpxFilesList } from "@/lib/gpx";
+import { getGpxFilesList, gpxRecordToDisplay } from "@/lib/gpx";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -7,7 +7,8 @@ export async function GET() {
   }
   try {
     const files = await getGpxFilesList();
-    return NextResponse.json(files);
+    const forDisplay = files.map(gpxRecordToDisplay);
+    return NextResponse.json(forDisplay);
   } catch (err) {
     console.error("[GET /api/gpx/files]", err);
     return NextResponse.json([]);
