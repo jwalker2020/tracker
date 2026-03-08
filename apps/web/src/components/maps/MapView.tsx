@@ -5,6 +5,7 @@ import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 import { getDisplayGeometry } from "@/lib/gpx";
+import { DEFAULT_BASEMAP_ID, getBasemapById } from "@/lib/maps/basemaps";
 import { getLatLngForIndex, TrackElevationProfile, type ProfilePoint } from "@/components/gpx/TrackElevationProfile";
 import { TrackDetailsPanel } from "@/components/gpx/TrackDetailsPanel";
 import { MapHoverMarker } from "@/components/maps/MapHoverMarker";
@@ -13,15 +14,20 @@ import "leaflet/dist/leaflet.css";
 
 const DEFAULT_CENTER: [number, number] = [39.8283, -98.5795];
 const DEFAULT_ZOOM = 4;
-const OSM_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-const USGS_URL =
-  "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}";
+
+/** Fallback tile url/attribution so TileLayer never receives undefined (avoids .length on undefined). */
+const FALLBACK_TILE_URL =
+  "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const FALLBACK_ATTRIBUTION = "© OpenStreetMap contributors";
 
 type MapViewProps = {
   baseUrl: string;
   files: GpxFileRecordForDisplay[];
   fitToSelectionTrigger?: number;
   className?: string;
+  /** When provided with onBasemapIdChange, basemap is controlled by parent (picker rendered outside MapView). */
+  basemapId?: string;
+  onBasemapIdChange?: (id: string) => void;
 };
 
 type LeafletPolyline = import("leaflet").Polyline;
@@ -192,11 +198,37 @@ function parseProfileJson(json: string | null): ProfilePoint[] | null {
 
 export function MapView({
   baseUrl,
-  files,
+  files: filesProp,
   fitToSelectionTrigger = 0,
   className = "",
+  basemapId: controlledBasemapId,
+  onBasemapIdChange,
 }: MapViewProps) {
-  const [basemap, setBasemap] = useState<"osm" | "usgs">("osm");
+  const files = filesProp ?? [];
+  const [internalBasemapId, setInternalBasemapId] = useState<string>(DEFAULT_BASEMAP_ID);
+  const basemapId = controlledBasemapId ?? internalBasemapId;
+  const setBasemapId = onBasemapIdChange ?? setInternalBasemapId;
+  const basemap =
+    getBasemapById(basemapId) ??
+    getBasemapById(DEFAULT_BASEMAP_ID) ?? {
+      id: "osm",
+      name: "OpenStreetMap",
+      url: FALLBACK_TILE_URL,
+      attribution: FALLBACK_ATTRIBUTION,
+      maxZoom: 19,
+      subdomains: "abc",
+    };
+  const baseTileUrl = typeof basemap?.url === "string" ? basemap.url : FALLBACK_TILE_URL;
+  const stadiaKey =
+    typeof process.env.NEXT_PUBLIC_STADIA_MAPS_API_KEY === "string" &&
+    process.env.NEXT_PUBLIC_STADIA_MAPS_API_KEY.length > 0
+      ? process.env.NEXT_PUBLIC_STADIA_MAPS_API_KEY
+      : null;
+  const tileUrl =
+    stadiaKey && baseTileUrl.includes("stadiamaps.com")
+      ? `${baseTileUrl}${baseTileUrl.includes("?") ? "&" : "?"}api_key=${stadiaKey}`
+      : baseTileUrl;
+  const tileAttribution = typeof basemap?.attribution === "string" ? basemap.attribution : FALLBACK_ATTRIBUTION;
   const [selectedTrack, setSelectedTrack] = useState<SelectedTrack | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [selectedTrackPoints, setSelectedTrackPoints] = useState<[number, number][] | null>(null);
@@ -253,9 +285,11 @@ export function MapView({
           style={{ height: "100%", minHeight: 300 }}
         >
           <TileLayer
-            key={basemap}
-            url={basemap === "osm" ? OSM_URL : USGS_URL}
-            attribution={basemap === "osm" ? "© OpenStreetMap contributors" : "USGS"}
+            key={basemap.id}
+            url={tileUrl}
+            attribution={tileAttribution}
+            maxZoom={basemap.maxZoom}
+            {...(basemap.subdomains != null ? { subdomains: basemap.subdomains } : {})}
           />
           <GpxOverlay
             baseUrl={baseUrl}
@@ -266,22 +300,6 @@ export function MapView({
           <MapHoverMarker hoveredLatLng={hoveredLatLng} />
           <FitToSelection files={files} fitToSelectionTrigger={fitToSelectionTrigger} />
         </MapContainer>
-        <div className="absolute left-2 bottom-12 z-[1000] flex flex-col gap-1 rounded border border-slate-700 bg-slate-900/95 p-1.5 shadow">
-          <button
-            type="button"
-            onClick={() => setBasemap("osm")}
-            className={`rounded px-2 py-1 text-xs font-medium ${basemap === "osm" ? "bg-sky-600 text-white" : "bg-slate-700 text-slate-200 hover:bg-slate-600"}`}
-          >
-            OpenStreetMap
-          </button>
-          <button
-            type="button"
-            onClick={() => setBasemap("usgs")}
-            className={`rounded px-2 py-1 text-xs font-medium ${basemap === "usgs" ? "bg-sky-600 text-white" : "bg-slate-700 text-slate-200 hover:bg-slate-600"}`}
-          >
-            USGS Topo
-          </button>
-        </div>
       </div>
       {selectedTrack && (
         <div className="flex h-[220px] shrink-0 gap-0 border-t border-slate-700 bg-slate-900/98 overflow-hidden">

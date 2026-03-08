@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
+import { BASEMAPS, DEFAULT_BASEMAP_ID } from "@/lib/maps/basemaps";
 import pb from "@/lib/pocketbase";
 import { GpxUploadForm } from "./GpxUploadForm";
 import { GpxFileList } from "./GpxFileList";
@@ -30,6 +31,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
   const [refetching, setRefetching] = useState(false);
   const [error, setError] = useState<string | undefined>(initialError);
   const [fitToSelectionTrigger, setFitToSelectionTrigger] = useState(0);
+  const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP_ID);
 
   const refetch = useCallback(async () => {
     setError(undefined);
@@ -147,12 +149,29 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
           />
         </section>
         <GpxLegend selectedFiles={selectedFiles} />
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-slate-100">Basemap</h2>
+          <select
+            value={basemapId}
+            onChange={(e) => setBasemapId(e.target.value)}
+            className="w-full rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs font-medium text-slate-200 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            aria-label="Select basemap"
+          >
+            {BASEMAPS.map((bm) => (
+              <option key={bm.id} value={bm.id}>
+                {bm.name}
+              </option>
+            ))}
+          </select>
+        </section>
       </aside>
       <div className="min-w-0 flex-1">
         <MapView
           baseUrl={baseUrl}
           files={selectedFiles}
           fitToSelectionTrigger={fitToSelectionTrigger}
+          basemapId={basemapId}
+          onBasemapIdChange={setBasemapId}
           className="h-full"
         />
       </div>
