@@ -2,10 +2,17 @@ import { NextResponse } from "next/server";
 import pb from "@/lib/pocketbase";
 import { enrichGpxWithDemPerTrack } from "@/lib/dem";
 import { buildEnhancementPerformance } from "@/lib/gpx/files";
-import { createJob, getProgress, setProgress } from "@/app/api/gpx/enrichment-progress/store";
+import {
+  createJob,
+  getProgress,
+  setProgress,
+  registerJobForRecord,
+  unregisterJobForRecord,
+} from "@/app/api/gpx/enrichment-progress/store";
 import {
   createCheckpointRecord,
   getResumableCheckpoint,
+  getCheckpointByRecordId,
   markCheckpointCompleted,
   markCheckpointFailed,
 } from "@/app/api/gpx/enrichment-checkpoint";
@@ -52,6 +59,11 @@ function startProgressLogging(jobId: string, isResume: boolean = false): void {
       demLog(`Enrichment job failed: ${p.error ?? "Unknown error"}`);
       return;
     }
+    if (p.status === "cancelled") {
+      clearInterval(intervalId);
+      demLog("Enrichment job cancelled");
+      return;
+    }
     if (p.status !== "running") return;
     const overallPercentComplete = p.overallPercentComplete ?? p.percentComplete ?? 0;
     const currentPhase = p.currentPhase ?? "enrichment";
@@ -81,6 +93,13 @@ async function runEnrichmentInBackground(
   const demBasePath = process.env.DEM_BASE_PATH?.trim();
   const baseUrl = process.env.NEXT_PUBLIC_PB_URL ?? "";
   let enhancementStartMs: number | undefined;
+
+  registerJobForRecord(recordId, jobId);
+  const isCancelled = async (): Promise<boolean> => {
+    if (getProgress(jobId)?.status === "cancelled") return true;
+    const cp = await getCheckpointByRecordId(pb, recordId);
+    return cp?.status === "cancelled";
+  };
 
   try {
     setProgress(jobId, { currentPhase: "setup", currentPhasePercent: 0, overallPercentComplete: 0 });
@@ -126,24 +145,36 @@ async function runEnrichmentInBackground(
     });
 
     enhancementStartMs = Date.now();
-    const result = await enrichGpxWithDemPerTrack(gpxText, {
-      demBasePath,
-      manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
-      onProgress: ({ processedPoints, totalPoints, percentComplete }) => {
-        const overall =
-          WEIGHT_SETUP +
-          WEIGHT_PARSING +
-          Math.round((percentComplete / 100) * WEIGHT_ENRICHMENT);
-        setProgress(jobId, {
-          processedPoints,
-          totalPoints: Math.max(totalPoints, processedPoints),
-          percentComplete: overall,
-          currentPhase: "enrichment",
-          currentPhasePercent: percentComplete,
-          overallPercentComplete: Math.min(99, overall),
-        });
-      },
-    });
+    let result: Awaited<ReturnType<typeof enrichGpxWithDemPerTrack>>;
+    try {
+      result = await enrichGpxWithDemPerTrack(gpxText, {
+        demBasePath,
+        manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
+        isCancelled,
+        onProgress: async ({ processedPoints, totalPoints, percentComplete }) => {
+          if (await isCancelled()) return;
+          const overall =
+            WEIGHT_SETUP +
+            WEIGHT_PARSING +
+            Math.round((percentComplete / 100) * WEIGHT_ENRICHMENT);
+          setProgress(jobId, {
+            processedPoints,
+            totalPoints: Math.max(totalPoints, processedPoints),
+            percentComplete: overall,
+            currentPhase: "enrichment",
+            currentPhasePercent: percentComplete,
+            overallPercentComplete: Math.min(99, overall),
+          });
+        },
+      });
+    } catch (enrichErr) {
+      const msg = enrichErr instanceof Error ? enrichErr.message : String(enrichErr);
+      if (msg === "ENRICHMENT_CANCELLED") {
+        setProgress(jobId, { status: "cancelled" });
+        return;
+      }
+      throw enrichErr;
+    }
 
     const { enrichedTracks, aggregates } = result;
     const hasAnyValidData = enrichedTracks.some((t) => t.validCount > 0);
@@ -167,6 +198,9 @@ async function runEnrichmentInBackground(
       return;
     }
 
+    if (isCancelled()) {
+      return;
+    }
     setProgress(jobId, {
       currentPhase: "saving",
       currentPhasePercent: 0,
@@ -186,6 +220,9 @@ async function runEnrichmentInBackground(
       totalPoints,
       "completed"
     );
+    if (isCancelled()) {
+      return;
+    }
     const update: Record<string, unknown> = {
       enrichedTracksJson: JSON.stringify(enrichedTracks),
       distanceM: aggregates.distanceM,
@@ -219,6 +256,10 @@ async function runEnrichmentInBackground(
     demLog("Enrichment results saved. Job completed.");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (message === "ENRICHMENT_CANCELLED") {
+      setProgress(jobId, { status: "cancelled" });
+      return;
+    }
     console.error("[gpx/enrich] background job", err);
     setProgress(jobId, { status: "failed", error: message });
     try {
@@ -243,6 +284,8 @@ async function runEnrichmentInBackground(
         console.warn("[gpx/enrich] Failed to persist failure performance:", e);
       }
     }
+  } finally {
+    unregisterJobForRecord(recordId);
   }
 }
 

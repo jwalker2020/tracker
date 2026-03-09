@@ -1,7 +1,133 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
+
+const PHASE_LABELS: Record<string, string> = {
+  setup: "Preparing…",
+  parsing: "Parsing GPX",
+  enrichment: "Elevation sampling",
+  saving: "Saving results",
+  completed: "Complete",
+};
+
+type ProgressSnapshot = {
+  status: string;
+  overallPercentComplete?: number;
+  currentPhase?: string;
+  processedPoints?: number;
+  totalPoints?: number;
+  currentTrackIndex?: number;
+  totalTracks?: number;
+  error?: string;
+};
+
+const POLL_INTERVAL_MS = 2500;
+
+function EnrichmentProgressIcon({ jobId }: { jobId: string }) {
+  const [progress, setProgress] = useState<ProgressSnapshot | null>(null);
+  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const wrapperRef = useRef<HTMLSpanElement>(null);
+  const tooltipRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+    const poll = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const res = await fetch(`/api/gpx/enrichment-progress?jobId=${encodeURIComponent(jobId)}`);
+        if (cancelled) return;
+        if (res.ok) {
+          const data = (await res.json()) as ProgressSnapshot;
+          if (!cancelled) setProgress(data);
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    poll();
+    const id = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [jobId]);
+
+  const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
+  useLayoutEffect(() => {
+    if (!tooltipVisible || typeof document === "undefined") return;
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const rect = wrapper.getBoundingClientRect();
+    setTooltipStyle({
+      position: "fixed" as const,
+      left: rect.left + rect.width / 2,
+      top: rect.top,
+      transform: "translate(-50%, -100%) translateY(-4px)",
+      zIndex: 9999,
+    });
+  }, [tooltipVisible]);
+
+  const phaseLabel = progress?.currentPhase ? (PHASE_LABELS[progress.currentPhase] ?? progress.currentPhase) : "Enrichment";
+  const pct = progress?.overallPercentComplete ?? 0;
+  const processed = progress?.processedPoints ?? 0;
+  const total = progress?.totalPoints ?? 0;
+  const curTrack = progress?.currentTrackIndex;
+  const totalTracks = progress?.totalTracks;
+
+  const lines: string[] = [];
+  if (progress?.status === "failed" && progress?.error) {
+    lines.push("Enrichment failed", progress.error);
+  } else if (progress?.status === "cancelled") {
+    lines.push("Enrichment cancelled");
+  } else {
+    lines.push("Enrichment in progress");
+    lines.push(`Phase: ${phaseLabel}`);
+    lines.push(`Overall progress: ${Math.round(pct)}%`);
+    if (totalTracks != null && totalTracks > 0 && curTrack != null) {
+      lines.push(`Track: ${curTrack + 1} / ${totalTracks}`);
+    }
+    if (total > 0) {
+      lines.push(`Points: ${processed.toLocaleString()} / ${total.toLocaleString()}`);
+    }
+  }
+  const tooltipText = lines.join("\n");
+
+  const tooltipContent = tooltipVisible ? (
+    <span
+      ref={tooltipRef}
+      className="whitespace-pre-line rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-left text-xs font-normal text-slate-200 shadow-lg"
+      style={{ maxWidth: "260px", width: "max-content", ...tooltipStyle }}
+      role="tooltip"
+    >
+      {tooltipText}
+    </span>
+  ) : null;
+
+  return (
+    <span
+      ref={wrapperRef}
+      className="relative inline-flex h-3 w-3 shrink-0 items-center justify-center"
+      onMouseEnter={() => setTooltipVisible(true)}
+      onMouseLeave={() => setTooltipVisible(false)}
+      role="status"
+      aria-label="Enrichment in progress"
+    >
+      <span className="inline-flex h-3 w-3 items-center justify-center text-sky-400" aria-hidden>
+        <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+          <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+        </svg>
+      </span>
+      {typeof document !== "undefined" && tooltipContent
+        ? createPortal(tooltipContent, document.body)
+        : null}
+    </span>
+  );
+}
 
 type GpxFileListProps = {
   files: GpxFileRecordForDisplay[];
@@ -9,6 +135,8 @@ type GpxFileListProps = {
   selectedIds: Set<string>;
   onToggle: (id: string) => void;
   onReorder: (newOrderedIds: string[]) => void;
+  /** File ID -> enrichment job ID for files currently being enriched. Shows working icon + tooltip. */
+  activeEnrichmentJobByFileId?: Record<string, string>;
 };
 
 const filesById = (files: GpxFileRecordForDisplay[]) =>
@@ -29,6 +157,7 @@ export function GpxFileList({
   selectedIds,
   onToggle,
   onReorder,
+  activeEnrichmentJobByFileId = {},
 }: GpxFileListProps) {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [previewOrder, setPreviewOrder] = useState<string[] | null>(null);
@@ -138,11 +267,16 @@ export function GpxFileList({
           >
             {f.name}
           </label>
-          <span
-            className="h-3 w-3 shrink-0 rounded-full"
-            style={{ backgroundColor: f.color || "#3b82f6" }}
-            title={f.color}
-          />
+          <span className="flex shrink-0 items-center gap-0.5">
+            {activeEnrichmentJobByFileId[f.id] ? (
+              <EnrichmentProgressIcon jobId={activeEnrichmentJobByFileId[f.id]!} />
+            ) : null}
+            <span
+              className="h-3 w-3 shrink-0 rounded-full"
+              style={{ backgroundColor: f.color || "#3b82f6" }}
+              title={f.color}
+            />
+          </span>
         </li>
       ))}
     </ul>

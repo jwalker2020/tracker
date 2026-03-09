@@ -7,7 +7,7 @@ import type PocketBase from "pocketbase";
 
 const COLLECTION = "enrichment_jobs";
 
-export type EnrichmentJobStatus = "pending" | "running" | "completed" | "failed" | "resumable";
+export type EnrichmentJobStatus = "pending" | "running" | "completed" | "failed" | "resumable" | "cancelled";
 
 export type EnrichmentCheckpoint = {
   jobId: string;
@@ -56,6 +56,27 @@ function toCheckpoint(rec: Record<string, unknown>): EnrichmentCheckpointRecord 
     profileJson: rec.profileJson != null ? String(rec.profileJson) : null,
     errorMessage: rec.errorMessage != null ? String(rec.errorMessage) : null,
   };
+}
+
+/**
+ * Find the most recent checkpoint for the given GPX record (any status).
+ * Used to check cancellation and to get jobId by recordId.
+ */
+export async function getCheckpointByRecordId(
+  pb: PocketBase,
+  recordId: string
+): Promise<EnrichmentCheckpointRecord | null> {
+  try {
+    const list = await pb.collection(COLLECTION).getList(1, 1, {
+      filter: `recordId = "${recordId}"`,
+      sort: "-updatedAt",
+    });
+    const item = list.items[0];
+    if (!item) return null;
+    return toCheckpoint(item as Record<string, unknown>);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -214,4 +235,25 @@ export async function markCheckpointFailed(
     updatedAt: now,
     lastHeartbeatAt: now,
   });
+}
+
+/**
+ * Mark the job for the given record as cancelled (e.g. GPX file was deleted).
+ * Updates PocketBase so the running job can see cancellation from any process.
+ */
+export async function markCheckpointCancelled(
+  pb: PocketBase,
+  recordId: string
+): Promise<boolean> {
+  const cp = await getCheckpointByRecordId(pb, recordId);
+  if (!cp || cp.status === "completed" || cp.status === "failed" || cp.status === "cancelled") {
+    return false;
+  }
+  const now = pbDateString(new Date());
+  await pb.collection(COLLECTION).update(cp.id, {
+    status: "cancelled",
+    updatedAt: now,
+    lastHeartbeatAt: now,
+  });
+  return true;
 }

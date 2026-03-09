@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { enrichGpx, boundsToJson, gpxUploadSchema, isGpxFileName } from "@/lib/gpx";
 import pb from "@/lib/pocketbase";
-import { EnrichmentProgress } from "./EnrichmentProgress";
 
 const DEFAULT_COLORS = [
   "#3b82f6", "#22c55e", "#eab308", "#ef4444", "#8b5cf6",
@@ -15,6 +14,10 @@ const ENRICHMENT_JOB_KEY = "gpx_enrichment_job_id";
 
 type GpxUploadFormProps = {
   onUploadSuccess: () => void;
+  /** Called when a background enrichment job starts for a newly uploaded file. */
+  onEnrichmentStarted?: (recordId: string, jobId: string) => void;
+  /** Called when the enrichment job for that file completes or fails (clears working icon). */
+  onEnrichmentComplete?: (recordId: string) => void;
 };
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -48,7 +51,11 @@ function getErrorMessage(err: unknown): string {
   return "Upload failed.";
 }
 
-export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
+export function GpxUploadForm({
+  onUploadSuccess,
+  onEnrichmentStarted,
+  onEnrichmentComplete,
+}: GpxUploadFormProps) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(DEFAULT_COLORS[0]);
   const [uploading, setUploading] = useState(false);
@@ -56,6 +63,7 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
+  const lastEnrichedRecordIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const stored = sessionStorage.getItem(ENRICHMENT_JOB_KEY);
@@ -69,6 +77,64 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
     }, SUCCESS_MESSAGE_DURATION_MS);
     return () => clearTimeout(t);
   }, [success]);
+
+  // Poll for enrichment job completion so we can clear state and notify parent (file list icon).
+  const POLL_INTERVAL_MS = 5000;
+  useEffect(() => {
+    if (!enrichmentJobId) return;
+    let cancelled = false;
+    let inFlight = false;
+    const poll = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const res = await fetch(`/api/gpx/enrichment-progress?jobId=${encodeURIComponent(enrichmentJobId)}`);
+        if (cancelled) return;
+        if (res.status === 404) {
+          const recordId = lastEnrichedRecordIdRef.current;
+          sessionStorage.removeItem(ENRICHMENT_JOB_KEY);
+          setEnrichmentJobId(null);
+          lastEnrichedRecordIdRef.current = null;
+          if (recordId) onEnrichmentComplete?.(recordId);
+          return;
+        }
+        if (!res.ok) return;
+        const data = (await res.json()) as { status: string; error?: string };
+        if (cancelled) return;
+        const recordId = lastEnrichedRecordIdRef.current;
+        if (data.status === "completed") {
+          sessionStorage.removeItem(ENRICHMENT_JOB_KEY);
+          setEnrichmentJobId(null);
+          lastEnrichedRecordIdRef.current = null;
+          if (recordId) onEnrichmentComplete?.(recordId);
+          onUploadSuccess();
+          return;
+        }
+        if (data.status === "cancelled") {
+          sessionStorage.removeItem(ENRICHMENT_JOB_KEY);
+          setEnrichmentJobId(null);
+          lastEnrichedRecordIdRef.current = null;
+          if (recordId) onEnrichmentComplete?.(recordId);
+          return;
+        }
+        if (data.status === "failed") {
+          sessionStorage.removeItem(ENRICHMENT_JOB_KEY);
+          setWarning(data.error ?? "Enrichment failed.");
+          setEnrichmentJobId(null);
+          lastEnrichedRecordIdRef.current = null;
+          if (recordId) onEnrichmentComplete?.(recordId);
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    poll();
+    const id = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [enrichmentJobId, onEnrichmentComplete, onUploadSuccess]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -147,6 +213,8 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
         if (data.jobId) {
           sessionStorage.setItem(ENRICHMENT_JOB_KEY, data.jobId);
           setEnrichmentJobId(data.jobId);
+          lastEnrichedRecordIdRef.current = record.id;
+          onEnrichmentStarted?.(record.id, data.jobId);
         }
         if (data.ok === false || (!data.jobId && data.warning && !data.skipped)) setWarning(data.warning ?? "Enrichment could not be started.");
       } catch {
@@ -208,21 +276,6 @@ export function GpxUploadForm({ onUploadSuccess }: GpxUploadFormProps) {
       ) : null}
       {success ? (
         <p className="text-xs text-green-400" role="status">Uploaded!</p>
-      ) : null}
-      {enrichmentJobId ? (
-        <EnrichmentProgress
-          jobId={enrichmentJobId}
-          onComplete={() => {
-            sessionStorage.removeItem(ENRICHMENT_JOB_KEY);
-            setEnrichmentJobId(null);
-            onUploadSuccess();
-          }}
-          onError={(message) => {
-            sessionStorage.removeItem(ENRICHMENT_JOB_KEY);
-            setWarning(message);
-            setEnrichmentJobId(null);
-          }}
-        />
       ) : null}
       {warning ? (
         <p className="text-xs text-amber-400" role="status" aria-live="polite">

@@ -48,6 +48,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
   const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP_ID);
   const [hillshadeMode, setHillshadeMode] = useState<HillshadeMode>(DEFAULT_HILLSHADE_MODE);
   const [parcelsEnabled, setParcelsEnabled] = useState(false);
+  const [activeEnrichmentByFileId, setActiveEnrichmentByFileId] = useState<Record<string, string>>({});
 
   const refetch = useCallback(async () => {
     setError(undefined);
@@ -78,7 +79,22 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
     if (selectedIds.size === 0) return;
     setDeleting(true);
     try {
-      await Promise.all([...selectedIds].map((id) => pb.collection(COLLECTION).delete(id)));
+      const ids = [...selectedIds];
+      await Promise.all(
+        ids.map((id) =>
+          fetch("/api/gpx/enrichment-cancel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ recordId: id }),
+          })
+        )
+      );
+      setActiveEnrichmentByFileId((prev) => {
+        const next = { ...prev };
+        ids.forEach((id) => delete next[id]);
+        return next;
+      });
+      await Promise.all(ids.map((id) => pb.collection(COLLECTION).delete(id)));
       setSelectedIds(new Set());
       await refetch();
     } catch {
@@ -122,7 +138,19 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
         ) : null}
         <section>
           <h2 className="mb-3 text-sm font-semibold text-slate-100">Upload GPX</h2>
-          <GpxUploadForm onUploadSuccess={refetch} />
+          <GpxUploadForm
+            onUploadSuccess={refetch}
+            onEnrichmentStarted={(recordId, jobId) => {
+              setActiveEnrichmentByFileId((prev) => ({ ...prev, [recordId]: jobId }));
+            }}
+            onEnrichmentComplete={(recordId) => {
+              setActiveEnrichmentByFileId((prev) => {
+                const next = { ...prev };
+                delete next[recordId];
+                return next;
+              });
+            }}
+          />
           <button
             type="button"
             onClick={deleteSelected}
@@ -162,6 +190,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
             selectedIds={selectedIds}
             onToggle={onToggle}
             onReorder={onReorder}
+            activeEnrichmentJobByFileId={activeEnrichmentByFileId}
           />
         </section>
         <GpxLegend selectedFiles={selectedFiles} />

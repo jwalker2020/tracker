@@ -75,6 +75,8 @@ export type DemEnrichmentConfig = {
   resumeState?: EnrichmentResumeState;
   /** Optional checkpoint callback; called after each chunk with payload to persist. */
   onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
+  /** Optional; when true, the pipeline should exit cleanly without writing results. Sync or async. */
+  isCancelled?: () => boolean | Promise<boolean>;
 };
 
 /** Lightweight profile: cumulative distance (m), elevation (m), and map coords per point. */
@@ -178,6 +180,8 @@ type EnrichFromIndexOptions = {
   onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
   /** When set, use this sampler and do not close it (caller owns lifecycle). Enables tile cache reuse across tracks. */
   sharedSampler?: DemRasterSampler;
+  /** Optional; when true, stop processing and exit cleanly. Sync or async. */
+  isCancelled?: () => boolean | Promise<boolean>;
 };
 
 /** Point with optional elevation: [lat, lng] or [lat, lng, ele]. */
@@ -358,9 +362,16 @@ export async function enrichSingleTrackFromIndex(
   const samplingStartMs = Date.now();
   type OpenTileT = (NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>);
   let lastUsedTile: OpenTileT | null = null;
+  let cancelled = false;
 
   try {
     for (let chunkStart = startIndex; chunkStart < totalPoints; chunkStart += CHUNK_SIZE) {
+      const c = options?.isCancelled?.();
+      const cancelledThisChunk = typeof c?.then === "function" ? await c : c;
+      if (cancelledThisChunk) {
+        cancelled = true;
+        break;
+      }
       const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalPoints);
       const chunkLen = chunkEnd - chunkStart;
       const chunkElevations: (number | null)[] = new Array(chunkLen);
@@ -429,6 +440,11 @@ export async function enrichSingleTrackFromIndex(
     }
   } finally {
     clearInterval(progressLogIntervalId);
+  }
+
+  if (cancelled) {
+    if (!options?.sharedSampler) sampler.closeAll();
+    throw new Error("ENRICHMENT_CANCELLED");
   }
 
   const samplingMs = Date.now() - samplingStartMs;
@@ -718,6 +734,11 @@ export async function enrichGpxWithDemPerTrack(
 
   try {
     for (let i = 0; i < tracks.length; i++) {
+      const c = config.isCancelled?.();
+      const cancelled = typeof c?.then === "function" ? await c : c;
+      if (cancelled) {
+        throw new Error("ENRICHMENT_CANCELLED");
+      }
       const track = tracks[i]!;
       const progressOffset = completedPoints;
       const onProgress =
@@ -739,6 +760,7 @@ export async function enrichGpxWithDemPerTrack(
       const result = await enrichSingleTrackFromIndex(track.points, track.bounds, index, {
         onProgress,
         sharedSampler,
+        isCancelled: config.isCancelled,
       });
       enrichedTracks.push(toEnrichedTrackSummary(track, result));
       completedPoints += result.stats.totalCount;
