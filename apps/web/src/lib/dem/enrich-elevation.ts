@@ -176,6 +176,8 @@ type EnrichFromIndexOptions = {
   onProgress?: DemEnrichmentProgressCallback;
   resumeState?: EnrichmentResumeState;
   onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
+  /** When set, use this sampler and do not close it (caller owns lifecycle). Enables tile cache reuse across tracks. */
+  sharedSampler?: DemRasterSampler;
 };
 
 /** Point with optional elevation: [lat, lng] or [lat, lng, ele]. */
@@ -231,7 +233,7 @@ export async function enrichSingleTrackFromIndex(
     return { stats, distanceM: safeDistanceM, elevations, elevationHint: "no_intersecting_tiles" as const };
   }
 
-  const sampler = new DemRasterSampler(index.basePath);
+  const sampler = options?.sharedSampler ?? new DemRasterSampler(index.basePath);
   const openTiles: NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>[] = [];
   const t0 = Date.now();
   for (const meta of tiles) {
@@ -256,7 +258,7 @@ export async function enrichSingleTrackFromIndex(
       "| resolved:",
       resolvedFirst
     );
-    sampler.closeAll();
+    if (!options?.sharedSampler) sampler.closeAll();
     const elevations: (number | null)[] = points.map(() => null);
     const stats = computeElevationStatsWithDistance(elevations, safeDistanceM);
     return { stats, distanceM: safeDistanceM, elevations, elevationHint: "no_open_tiles" as const };
@@ -354,6 +356,8 @@ export async function enrichSingleTrackFromIndex(
   const progressInterval = Math.max(1, Math.floor(totalPoints / 100));
 
   const samplingStartMs = Date.now();
+  type OpenTileT = (NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>);
+  let lastUsedTile: OpenTileT | null = null;
 
   try {
     for (let chunkStart = startIndex; chunkStart < totalPoints; chunkStart += CHUNK_SIZE) {
@@ -370,16 +374,23 @@ export async function enrichSingleTrackFromIndex(
           typeof rawEle === "number" && Number.isFinite(rawEle);
         let value: number | null = hasValidEle ? (rawEle as number) : null;
         if (!hasValidEle) {
-          const tile = findTileContainingPoint(openTiles, lng, lat);
+          const [w, s, e, n] = lastUsedTile?.meta.bbox ?? [0, 0, 0, 0];
+          const inLast = lastUsedTile != null && lng >= w && lng <= e && lat >= s && lat <= n;
+          const tile = inLast ? lastUsedTile : findTileContainingPoint(openTiles, lng, lat);
           if (tile) {
             const sample = await sampler.sample(tile, lng, lat);
-            if (sample.elevationM != null && isValidElevation(sample.elevationM)) value = sample.elevationM;
+            if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
+              value = sample.elevationM;
+              lastUsedTile = tile;
+            }
           }
           if (value == null) {
+            lastUsedTile = null;
             for (const open of openTiles) {
               const sample = await sampler.sample(open, lng, lat);
               if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
                 value = sample.elevationM;
+                lastUsedTile = open;
                 break;
               }
             }
@@ -426,7 +437,7 @@ export async function enrichSingleTrackFromIndex(
     `Enrichment completed: ${totalPoints.toLocaleString()} points in ${formatHhMmSs(elapsedSec)} (tileOpen=${tileOpenMs}ms sampling=${samplingMs}ms)`
   );
 
-  sampler.closeAll();
+  if (!options?.sharedSampler) sampler.closeAll();
 
   // Signed average grade = (totalAscent - totalDescent) / horizontal distance × 100 (negative for net descent).
   // Average steepness = (totalAscent + totalDescent) / horizontal distance × 100 (all segments, always ≥ 0).
@@ -695,6 +706,7 @@ export async function enrichGpxWithDemPerTrack(
   const totalPointsEstimate = tracks.reduce((s, t) => s + t.points.length, 0);
   let completedPoints = 0;
   const enrichedTracks: EnrichedTrackSummary[] = [];
+  const sharedSampler = new DemRasterSampler(index.basePath);
 
   const demLog = (msg: string): void => {
     try {
@@ -704,30 +716,35 @@ export async function enrichGpxWithDemPerTrack(
     }
   };
 
-  for (let i = 0; i < tracks.length; i++) {
-    const track = tracks[i]!;
-    const progressOffset = completedPoints;
-    const onProgress =
-      config.onProgress &&
-      ((data: { processedPoints: number; totalPoints: number; percentComplete: number }) => {
-        const globalProcessed = progressOffset + data.processedPoints;
-        const pct =
-          totalPointsEstimate > 0
-            ? Math.min(100, Math.round((globalProcessed / totalPointsEstimate) * 100))
-            : 0;
-        config.onProgress!({
-          processedPoints: globalProcessed,
-          totalPoints: totalPointsEstimate,
-          percentComplete: pct,
+  try {
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i]!;
+      const progressOffset = completedPoints;
+      const onProgress =
+        config.onProgress &&
+        ((data: { processedPoints: number; totalPoints: number; percentComplete: number }) => {
+          const globalProcessed = progressOffset + data.processedPoints;
+          const pct =
+            totalPointsEstimate > 0
+              ? Math.min(100, Math.round((globalProcessed / totalPointsEstimate) * 100))
+              : 0;
+          config.onProgress!({
+            processedPoints: globalProcessed,
+            totalPoints: totalPointsEstimate,
+            percentComplete: pct,
+          });
         });
-      });
 
-    demLog(`Enriching track ${i + 1}/${tracks.length}: ${track.name}`);
-    const result = await enrichSingleTrackFromIndex(track.points, track.bounds, index, {
-      onProgress,
-    });
-    enrichedTracks.push(toEnrichedTrackSummary(track, result));
-    completedPoints += result.stats.totalCount;
+      demLog(`Enriching track ${i + 1}/${tracks.length}: ${track.name}`);
+      const result = await enrichSingleTrackFromIndex(track.points, track.bounds, index, {
+        onProgress,
+        sharedSampler,
+      });
+      enrichedTracks.push(toEnrichedTrackSummary(track, result));
+      completedPoints += result.stats.totalCount;
+    }
+  } finally {
+    sharedSampler.closeAll();
   }
 
   const aggregates = computeAggregates(enrichedTracks);

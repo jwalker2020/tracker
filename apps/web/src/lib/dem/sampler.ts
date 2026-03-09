@@ -26,6 +26,8 @@ type OpenTile = {
   nodata: number | null;
   /** Cached WGS84 → raster CRS transform to avoid repeated proj4() in hot path. */
   toProjected: (lonlat: [number, number]) => [number, number];
+  /** Reused buffer for toProjected to avoid allocating [lon, lat] per sample. */
+  scratchLonLat: [number, number];
 };
 
 /**
@@ -131,7 +133,12 @@ export class DemRasterSampler {
   async sample(tile: OpenTile, lonWgs84: number, latWgs84: number): Promise<ElevationSample> {
     const { origin, resolution, width, height, nodata, toProjected } = tile;
 
-    const [x, y] = toProjected([lonWgs84, latWgs84]);
+    const scratch = tile.scratchLonLat;
+    const lonlat: [number, number] =
+      scratch != null
+        ? ((scratch[0] = lonWgs84), (scratch[1] = latWgs84), scratch)
+        : [lonWgs84, latWgs84];
+    const [x, y] = toProjected(lonlat);
 
     // resolution[1] is often negative (image Y increases downward); use abs so pixel Y increases southward
     const resX = resolution[0];
