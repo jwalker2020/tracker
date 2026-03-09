@@ -198,7 +198,8 @@ async function runEnrichmentInBackground(
       return;
     }
 
-    if (isCancelled()) {
+    if (await isCancelled()) {
+      setProgress(jobId, { status: "cancelled" });
       return;
     }
     setProgress(jobId, {
@@ -268,7 +269,9 @@ async function runEnrichmentInBackground(
       console.warn("[gpx/enrich] Checkpoint mark failed:", e);
     }
     const enhancementEndMs = Date.now();
-    if (enhancementStartMs != null) {
+    if (await isCancelled()) {
+      setProgress(jobId, { status: "cancelled" });
+    } else if (enhancementStartMs != null) {
       const failedPerf = buildEnhancementPerformance(
         enhancementStartMs,
         enhancementEndMs,

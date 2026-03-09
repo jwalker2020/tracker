@@ -377,6 +377,14 @@ export async function enrichSingleTrackFromIndex(
       const chunkElevations: (number | null)[] = new Array(chunkLen);
 
       for (let i = chunkStart; i < chunkEnd; i++) {
+        if ((i - chunkStart) % 500 === 0 && i > chunkStart) {
+          const c = options?.isCancelled?.();
+          const cancelledNow = typeof c?.then === "function" ? await c : c;
+          if (cancelledNow) {
+            cancelled = true;
+            break;
+          }
+        }
         const pt = pointsToSample[i]!;
         const lat = pt[0];
         const lng = pt[1];
@@ -418,6 +426,7 @@ export async function enrichSingleTrackFromIndex(
           reportProgress(processed);
         }
       }
+      if (cancelled) break;
 
       accumulatedState = mergeChunkElevationState(accumulatedState, chunkElevations);
 

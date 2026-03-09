@@ -80,19 +80,17 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
     setDeleting(true);
     try {
       const ids = [...selectedIds];
-      await Promise.all(
-        ids.map((id) =>
-          fetch("/api/gpx/enrichment-cancel", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ recordId: id }),
-          })
-        )
-      );
       setActiveEnrichmentByFileId((prev) => {
         const next = { ...prev };
         ids.forEach((id) => delete next[id]);
         return next;
+      });
+      ids.forEach((id) => {
+        fetch("/api/gpx/enrichment-cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordId: id }),
+        }).catch(() => {});
       });
       await Promise.all(ids.map((id) => pb.collection(COLLECTION).delete(id)));
       setSelectedIds(new Set());
