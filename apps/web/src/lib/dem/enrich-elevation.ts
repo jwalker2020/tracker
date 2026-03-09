@@ -11,7 +11,7 @@ import {
   ELEVATION_SMOOTH_WINDOW_SIZE,
   isValidElevation,
   mergeChunkElevationState,
-  smoothElevationSeries,
+  smoothElevationSeriesMedian,
   type AccumulatedElevationState,
 } from "./elevation-stats";
 import type { EnrichedTrackSummary } from "./types";
@@ -472,7 +472,7 @@ export async function enrichSingleTrackFromIndex(
   const rawElevations = profileSoFar.map((p) => p.e);
   const smoothedElevations =
     rawElevations.length > 0
-      ? smoothElevationSeries(rawElevations, ELEVATION_SMOOTH_WINDOW_SIZE)
+      ? smoothElevationSeriesMedian(rawElevations, ELEVATION_SMOOTH_WINDOW_SIZE)
       : [];
   const statsFromSmoothed =
     smoothedElevations.length > 0
