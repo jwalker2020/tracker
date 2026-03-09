@@ -21,5 +21,5 @@ If login fails, the form shows a short message. Common causes: wrong email/passw
 
 ## Technical notes
 
-- **Server:** API routes read the user from the request cookie via `getCurrentUserId(request)`. Real auth is cookie-based (set by the client after login).
+- **Server:** Login is handled by `POST /api/auth/login`, which authenticates with PocketBase and sets the auth cookie via `Set-Cookie`. All API routes (list, upload, enrich, progress, cancel, delete) read the user from the request cookie via `getCurrentUserId(request)`.
 - **Optional:** `GUEST_USER_ID` in env is only an optional dev fallback when no cookie is present; do not rely on it for normal use.

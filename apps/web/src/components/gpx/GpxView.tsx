@@ -51,7 +51,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
     setError(undefined);
     setRefetching(true);
     try {
-      const res = await fetch("/api/gpx/files");
+      const res = await fetch("/api/gpx/files", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch");
       const list = (await res.json()) as GpxFileRecordForDisplay[];
       setFiles(list);
@@ -84,7 +84,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
       });
       const results = await Promise.all(
         ids.map((id) =>
-          fetch(`/api/gpx/files/${encodeURIComponent(id)}`, { method: "DELETE" })
+          fetch(`/api/gpx/files/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" })
         )
       );
       const failed = results.some((r) => !r.ok);
@@ -113,6 +113,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ orderedIds: newOrderedIds }),
+          credentials: "include",
         });
         if (!res.ok) await refetch();
       } catch {

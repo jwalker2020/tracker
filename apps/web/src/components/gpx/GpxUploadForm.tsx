@@ -87,7 +87,7 @@ export function GpxUploadForm({
       if (cancelled || inFlight) return;
       inFlight = true;
       try {
-        const res = await fetch(`/api/gpx/enrichment-progress?jobId=${encodeURIComponent(enrichmentJobId)}`);
+        const res = await fetch(`/api/gpx/enrichment-progress?jobId=${encodeURIComponent(enrichmentJobId)}`, { credentials: "include" });
         if (cancelled) return;
         if (res.status === 404) {
           const recordId = lastEnrichedRecordIdRef.current;
@@ -212,6 +212,7 @@ export function GpxUploadForm({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: record.id, async: true }),
+          credentials: "include",
         });
         const data = (await res.json()) as { ok?: boolean; skipped?: boolean; warning?: string; error?: string; jobId?: string };
         if (data.skipped && data.warning) setWarning(data.warning);

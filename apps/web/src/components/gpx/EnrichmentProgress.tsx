@@ -51,6 +51,7 @@ export function EnrichmentProgress({ jobId, onComplete, onError }: EnrichmentPro
         const timeoutId = setTimeout(() => controller.abort(), 25000);
         const res = await fetch(`/api/gpx/enrichment-progress?jobId=${encodeURIComponent(jobId)}`, {
           signal: controller.signal,
+          credentials: "include",
         });
         clearTimeout(timeoutId);
         if (cancelled) return;

@@ -38,7 +38,7 @@ function EnrichmentProgressIcon({ jobId }: { jobId: string }) {
       if (cancelled || inFlight) return;
       inFlight = true;
       try {
-        const res = await fetch(`/api/gpx/enrichment-progress?jobId=${encodeURIComponent(jobId)}`);
+        const res = await fetch(`/api/gpx/enrichment-progress?jobId=${encodeURIComponent(jobId)}`, { credentials: "include" });
         if (cancelled) return;
         if (res.ok) {
           const data = (await res.json()) as ProgressSnapshot;

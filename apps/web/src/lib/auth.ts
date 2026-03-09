@@ -1,7 +1,7 @@
 /**
  * Server-side auth helpers for multi-user isolation.
- * Primary path: PocketBase auth cookie (set by client after login). Server reads it from request headers.
- * Optional dev fallback: GUEST_USER_ID env when no cookie (do not rely on this for normal use).
+ * Primary path: PocketBase auth cookie set by server (Set-Cookie from POST /api/auth/login). Server reads it from the request Cookie header.
+ * Optional dev fallback only: GUEST_USER_ID env when no cookie (do not rely on this for normal use).
  */
 
 import PocketBase from "pocketbase";
@@ -32,7 +32,7 @@ export async function getCurrentUserId(request: Request): Promise<string | null>
 
 /**
  * Returns the current user's id from a headers-like object (e.g. next/headers() in server components).
- * Real auth: from PocketBase auth cookie (set by client after login).
+ * Real auth: from PocketBase auth cookie (set by server on login).
  * Optional dev fallback only: when no cookie, GUEST_USER_ID env (single shared user); not for production reliance.
  */
 export async function getCurrentUserIdFromHeaders(headers: HeadersLike): Promise<string | null> {
