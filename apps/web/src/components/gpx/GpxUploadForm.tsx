@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import { enrichGpx, boundsToJson, gpxUploadSchema, isGpxFileName } from "@/lib/gpx";
-import pb from "@/lib/pocketbase";
 
 const DEFAULT_COLORS = [
   "#3b82f6", "#22c55e", "#eab308", "#ef4444", "#8b5cf6",
@@ -22,7 +21,7 @@ type GpxUploadFormProps = {
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error("Upload timed out. Is PocketBase running at NEXT_PUBLIC_PB_URL?")), ms);
+    const t = setTimeout(() => reject(new Error("Upload timed out.")), ms);
     promise.then(
       (v) => {
         clearTimeout(t);
@@ -192,10 +191,16 @@ export function GpxUploadForm({
       formData.append("averageGradePct", String(enriched.averageGradePct));
       formData.append("enrichedGeoJson", enriched.enrichedGeoJson);
 
-      const record = await withTimeout(
-        pb.collection("gpx_files").create(formData),
+      const uploadRes = await withTimeout(
+        fetch("/api/gpx/upload", { method: "POST", body: formData, credentials: "include" }),
         UPLOAD_TIMEOUT_MS
       );
+      if (!uploadRes.ok) {
+        const errData = await uploadRes.json().catch(() => ({}));
+        throw new Error((errData as { error?: string }).error ?? "Upload failed.");
+      }
+      const { id } = (await uploadRes.json()) as { id: string };
+      const record = { id };
       form.reset();
       setName("");
       setColor(DEFAULT_COLORS[0]);

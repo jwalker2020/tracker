@@ -18,7 +18,6 @@ const HILLSHADE_FOR_BASEMAP: Record<string, HillshadeMode> = {
   "carto-positron": "none",
   "stamen-terrain": "none",
 };
-import pb from "@/lib/pocketbase";
 import { GpxUploadForm } from "./GpxUploadForm";
 import { GpxFileList } from "./GpxFileList";
 import { GpxLegend } from "./GpxLegend";
@@ -32,8 +31,6 @@ type GpxViewProps = {
   baseUrl: string;
   initialError?: string;
 };
-
-const COLLECTION = "gpx_files";
 
 export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
   const [files, setFiles] = useState<GpxFileRecordForDisplay[]>(initialFiles);
@@ -85,18 +82,19 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
         ids.forEach((id) => delete next[id]);
         return next;
       });
-      ids.forEach((id) => {
-        fetch("/api/gpx/enrichment-cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recordId: id }),
-        }).catch(() => {});
-      });
-      await Promise.all(ids.map((id) => pb.collection(COLLECTION).delete(id)));
+      const results = await Promise.all(
+        ids.map((id) =>
+          fetch(`/api/gpx/files/${encodeURIComponent(id)}`, { method: "DELETE" })
+        )
+      );
+      const failed = results.some((r) => !r.ok);
+      if (failed) {
+        setError("Some files could not be deleted.");
+      }
       setSelectedIds(new Set());
       await refetch();
     } catch {
-      // leave selection and list as is on error
+      setError("Could not delete files.");
     } finally {
       setDeleting(false);
     }
@@ -111,11 +109,12 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
     async (newOrderedIds: string[]) => {
       setOrderedFileIds(newOrderedIds);
       try {
-        await Promise.all(
-          newOrderedIds.map((id, index) =>
-            pb.collection(COLLECTION).update(id, { sortOrder: index })
-          )
-        );
+        const res = await fetch("/api/gpx/files", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderedIds: newOrderedIds }),
+        });
+        if (!res.ok) await refetch();
       } catch {
         await refetch();
       }

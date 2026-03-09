@@ -1,25 +1,22 @@
 import { NextResponse } from "next/server";
 import pb from "@/lib/pocketbase";
+import { getCurrentUserId } from "@/lib/auth";
 import { enrichGpxWithDemPerTrack } from "@/lib/dem";
 import { buildEnhancementPerformance } from "@/lib/gpx/files";
-import {
-  createJob,
-  getProgress,
-  setProgress,
-  registerJobForRecord,
-  unregisterJobForRecord,
-} from "@/app/api/gpx/enrichment-progress/store";
 import {
   createCheckpointRecord,
   getResumableCheckpoint,
   getCheckpointByRecordId,
+  getJobByJobId,
   markCheckpointCompleted,
   markCheckpointFailed,
+  updateJobProgress,
 } from "@/app/api/gpx/enrichment-checkpoint";
 
 const COLLECTION = "gpx_files";
 const DEM_LOG_INTERVAL_MS = 10_000;
 const CHUNK_SIZE = 10_000;
+const PROGRESS_WRITE_THROTTLE_MS = 1_500;
 
 const WEIGHT_SETUP = 5;
 const WEIGHT_PARSING = 5;
@@ -34,7 +31,11 @@ function demLog(msg: string): void {
   }
 }
 
-function startProgressLogging(jobId: string, isResume: boolean = false): void {
+function startProgressLogging(
+  jobId: string,
+  checkpointRecordId: string | null,
+  isResume: boolean
+): void {
   const startMs = Date.now();
   const formatHhMmSs = (totalSeconds: number): string => {
     const h = Math.floor(totalSeconds / 3600);
@@ -43,31 +44,31 @@ function startProgressLogging(jobId: string, isResume: boolean = false): void {
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   };
   demLog(isResume ? "Enrichment job resuming from checkpoint" : "Enrichment job started");
-  const intervalId = setInterval(() => {
-    const p = getProgress(jobId);
-    if (!p) {
+  const intervalId = setInterval(async () => {
+    const job = await getJobByJobId(pb, jobId);
+    if (!job) {
       clearInterval(intervalId);
       return;
     }
-    if (p.status === "completed") {
+    if (job.status === "completed") {
       clearInterval(intervalId);
       demLog("Enrichment job completed");
       return;
     }
-    if (p.status === "failed") {
+    if (job.status === "failed") {
       clearInterval(intervalId);
-      demLog(`Enrichment job failed: ${p.error ?? "Unknown error"}`);
+      demLog(`Enrichment job failed: ${job.error ?? job.errorMessage ?? "Unknown error"}`);
       return;
     }
-    if (p.status === "cancelled") {
+    if (job.status === "cancelled") {
       clearInterval(intervalId);
       demLog("Enrichment job cancelled");
       return;
     }
-    if (p.status !== "running") return;
-    const overallPercentComplete = p.overallPercentComplete ?? p.percentComplete ?? 0;
-    const currentPhase = p.currentPhase ?? "enrichment";
-    const { processedPoints, totalPoints } = p;
+    if (job.status !== "running") return;
+    const overallPercentComplete = job.overallPercentComplete ?? 0;
+    const currentPhase = job.currentPhase ?? "enrichment";
+    const { processedPoints, totalPoints } = job;
     const elapsedMs = Date.now() - startMs;
     const elapsedSec = Math.floor(elapsedMs / 1000);
     let estimatedRemaining = "";
@@ -93,23 +94,30 @@ async function runEnrichmentInBackground(
   const demBasePath = process.env.DEM_BASE_PATH?.trim();
   const baseUrl = process.env.NEXT_PUBLIC_PB_URL ?? "";
   let enhancementStartMs: number | undefined;
+  let lastProgressWrite = 0;
 
-  registerJobForRecord(recordId, jobId);
+  const writeProgress = async (update: Parameters<typeof updateJobProgress>[2]) => {
+    await updateJobProgress(pb, jobId, update, checkpointRecordId);
+  };
+
   const isCancelled = async (): Promise<boolean> => {
-    if (getProgress(jobId)?.status === "cancelled") return true;
     const cp = await getCheckpointByRecordId(pb, recordId);
     return cp?.status === "cancelled";
   };
 
   try {
-    setProgress(jobId, { currentPhase: "setup", currentPhasePercent: 0, overallPercentComplete: 0 });
+    await writeProgress({
+      currentPhase: "setup",
+      currentPhasePercent: 0,
+      overallPercentComplete: 0,
+    });
 
     if (!demBasePath) {
-      setProgress(jobId, { status: "failed", error: "DEM_BASE_PATH is not set." });
+      await writeProgress({ status: "failed", error: "DEM_BASE_PATH is not set." });
       return;
     }
     if (!baseUrl) {
-      setProgress(jobId, { status: "failed", error: "NEXT_PUBLIC_PB_URL is not set." });
+      await writeProgress({ status: "failed", error: "NEXT_PUBLIC_PB_URL is not set." });
       return;
     }
 
@@ -117,7 +125,7 @@ async function runEnrichmentInBackground(
     try {
       record = await pb.collection(COLLECTION).getOne(recordId);
     } catch {
-      setProgress(jobId, { status: "failed", error: "Record not found." });
+      await writeProgress({ status: "failed", error: "Record not found." });
       return;
     }
 
@@ -128,17 +136,17 @@ async function runEnrichmentInBackground(
       if (!res.ok) throw new Error(`File fetch ${res.status}`);
       gpxText = await res.text();
     } catch {
-      setProgress(jobId, { status: "failed", error: "Could not load GPX file from storage." });
+      await writeProgress({ status: "failed", error: "Could not load GPX file from storage." });
       return;
     }
 
-    setProgress(jobId, {
+    await writeProgress({
       currentPhase: "parsing",
       currentPhasePercent: 100,
       overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING,
     });
 
-    setProgress(jobId, {
+    await writeProgress({
       currentPhase: "enrichment",
       currentPhasePercent: 0,
       overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING,
@@ -153,14 +161,16 @@ async function runEnrichmentInBackground(
         isCancelled,
         onProgress: async ({ processedPoints, totalPoints, percentComplete }) => {
           if (await isCancelled()) return;
+          const now = Date.now();
+          if (now - lastProgressWrite < PROGRESS_WRITE_THROTTLE_MS) return;
+          lastProgressWrite = now;
           const overall =
             WEIGHT_SETUP +
             WEIGHT_PARSING +
             Math.round((percentComplete / 100) * WEIGHT_ENRICHMENT);
-          setProgress(jobId, {
+          await writeProgress({
             processedPoints,
             totalPoints: Math.max(totalPoints, processedPoints),
-            percentComplete: overall,
             currentPhase: "enrichment",
             currentPhasePercent: percentComplete,
             overallPercentComplete: Math.min(99, overall),
@@ -170,7 +180,7 @@ async function runEnrichmentInBackground(
     } catch (enrichErr) {
       const msg = enrichErr instanceof Error ? enrichErr.message : String(enrichErr);
       if (msg === "ENRICHMENT_CANCELLED") {
-        setProgress(jobId, { status: "cancelled" });
+        await writeProgress({ status: "cancelled" });
         return;
       }
       throw enrichErr;
@@ -179,7 +189,7 @@ async function runEnrichmentInBackground(
     const { enrichedTracks, aggregates } = result;
     const hasAnyValidData = enrichedTracks.some((t) => t.validCount > 0);
     if (enrichedTracks.length === 0) {
-      setProgress(jobId, { status: "failed", error: "No tracks found in GPX." });
+      await writeProgress({ status: "failed", error: "No tracks found in GPX." });
       try {
         await markCheckpointFailed(pb, recordId, jobId, "No tracks found in GPX.", true);
       } catch (e) {
@@ -189,7 +199,7 @@ async function runEnrichmentInBackground(
     }
     if (!hasAnyValidData) {
       const reason = "All samples were nodata or out of extent for every track.";
-      setProgress(jobId, { status: "failed", error: reason });
+      await writeProgress({ status: "failed", error: reason });
       try {
         await markCheckpointFailed(pb, recordId, jobId, reason, true);
       } catch (e) {
@@ -199,10 +209,10 @@ async function runEnrichmentInBackground(
     }
 
     if (await isCancelled()) {
-      setProgress(jobId, { status: "cancelled" });
+      await writeProgress({ status: "cancelled" });
       return;
     }
-    setProgress(jobId, {
+    await writeProgress({
       currentPhase: "saving",
       currentPhasePercent: 0,
       overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING + WEIGHT_ENRICHMENT,
@@ -221,7 +231,7 @@ async function runEnrichmentInBackground(
       totalPoints,
       "completed"
     );
-    if (isCancelled()) {
+    if (await isCancelled()) {
       return;
     }
     const update: Record<string, unknown> = {
@@ -235,7 +245,7 @@ async function runEnrichmentInBackground(
       performanceJson: JSON.stringify(performance),
     };
     await pb.collection(COLLECTION).update(recordId, update);
-    setProgress(jobId, {
+    await writeProgress({
       currentPhase: "saving",
       currentPhasePercent: 80,
       overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING + WEIGHT_ENRICHMENT + Math.round(WEIGHT_SAVING * 0.8),
@@ -245,24 +255,23 @@ async function runEnrichmentInBackground(
     } catch (e) {
       console.warn("[gpx/enrich] Checkpoint mark completed failed:", e);
     }
-    setProgress(jobId, {
+    await writeProgress({
       status: "completed",
       currentPhase: "completed",
       currentPhasePercent: 100,
       overallPercentComplete: 100,
       processedPoints: totalPoints,
       totalPoints: totalPoints,
-      percentComplete: 100,
     });
     demLog("Enrichment results saved. Job completed.");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === "ENRICHMENT_CANCELLED") {
-      setProgress(jobId, { status: "cancelled" });
+      await writeProgress({ status: "cancelled" });
       return;
     }
     console.error("[gpx/enrich] background job", err);
-    setProgress(jobId, { status: "failed", error: message });
+    await writeProgress({ status: "failed", error: message });
     try {
       await markCheckpointFailed(pb, recordId, jobId, message, true);
     } catch (e) {
@@ -270,7 +279,7 @@ async function runEnrichmentInBackground(
     }
     const enhancementEndMs = Date.now();
     if (await isCancelled()) {
-      setProgress(jobId, { status: "cancelled" });
+      await writeProgress({ status: "cancelled" });
     } else if (enhancementStartMs != null) {
       const failedPerf = buildEnhancementPerformance(
         enhancementStartMs,
@@ -287,12 +296,15 @@ async function runEnrichmentInBackground(
         console.warn("[gpx/enrich] Failed to persist failure performance:", e);
       }
     }
-  } finally {
-    unregisterJobForRecord(recordId);
   }
 }
 
 export async function POST(request: Request) {
+  const userId = await getCurrentUserId(request);
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   let id: string;
   let startAsync: boolean;
   try {
@@ -309,6 +321,23 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { ok: false, error: "Invalid JSON body" },
       { status: 400 }
+    );
+  }
+
+  let gpxRecord: { user?: string; file?: string };
+  try {
+    gpxRecord = await pb.collection(COLLECTION).getOne(id);
+  } catch {
+    return NextResponse.json(
+      { ok: false, error: "Record not found" },
+      { status: 404 }
+    );
+  }
+  const ownerId = gpxRecord.user ?? (gpxRecord as { uploadedBy?: string }).uploadedBy;
+  if (ownerId !== userId) {
+    return NextResponse.json(
+      { ok: false, error: "Forbidden" },
+      { status: 403 }
     );
   }
 
@@ -343,21 +372,7 @@ export async function POST(request: Request) {
         checkpoint.status === "running" && Number.isFinite(heartbeatMs) && heartbeatMs < HEARTBEAT_MAX_AGE_MS;
 
       if (alreadyRunning) {
-        const total = checkpoint.totalPoints ?? 0;
-        const processed = checkpoint.processedPoints ?? 0;
-        const phasePct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-        const overall =
-          WEIGHT_SETUP + WEIGHT_PARSING + Math.round((phasePct / 100) * WEIGHT_ENRICHMENT);
-        setProgress(jobId, {
-          status: "running",
-          processedPoints: processed,
-          totalPoints: total,
-          percentComplete: overall,
-          currentPhase: "enrichment",
-          currentPhasePercent: phasePct,
-          overallPercentComplete: Math.min(99, overall),
-        });
-        startProgressLogging(jobId, false);
+        startProgressLogging(jobId, checkpointRecordId, false);
         return NextResponse.json({ ok: true, jobId, resumed: false });
       }
 
@@ -367,26 +382,32 @@ export async function POST(request: Request) {
       const phasePct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
       const overall =
         WEIGHT_SETUP + WEIGHT_PARSING + Math.round((phasePct / 100) * WEIGHT_ENRICHMENT);
-      setProgress(jobId, {
+      await updateJobProgress(pb, jobId, {
         status: "running",
         processedPoints: processed,
         totalPoints: total,
-        percentComplete: overall,
         currentPhase: "enrichment",
         currentPhasePercent: phasePct,
         overallPercentComplete: Math.min(99, overall),
-      });
+      }, checkpointRecordId);
     } else {
-      jobId = createJob();
+      jobId = crypto.randomUUID();
       isResume = false;
       try {
         const created = await createCheckpointRecord(pb, {
           jobId,
           recordId: id,
+          userId,
           totalPoints: 0,
           chunkSize: CHUNK_SIZE,
         });
         checkpointRecordId = created.id;
+        await updateJobProgress(pb, jobId, {
+          status: "running",
+          currentPhase: "enrichment",
+          currentPhasePercent: 0,
+          overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING,
+        }, checkpointRecordId);
       } catch (e: unknown) {
         const err = e as {
           response?: { message?: string; data?: Record<string, unknown> };
@@ -398,7 +419,7 @@ export async function POST(request: Request) {
       }
     }
 
-    startProgressLogging(jobId, isResume);
+    startProgressLogging(jobId, checkpointRecordId, isResume);
     void runEnrichmentInBackground(id, jobId, checkpointRecordId);
     return NextResponse.json({ ok: true, jobId, resumed: isResume });
   }

@@ -29,6 +29,14 @@ export type EnrichmentCheckpoint = {
   validCount: number;
   profileJson: string | null;
   errorMessage: string | null;
+  /** Owner (PocketBase user id). Set for progress/cancel ownership. */
+  userId: string | null;
+  overallPercentComplete: number | null;
+  currentPhase: string | null;
+  currentPhasePercent: number | null;
+  error: string | null;
+  currentTrackIndex: number | null;
+  totalTracks: number | null;
 };
 
 export type EnrichmentCheckpointRecord = EnrichmentCheckpoint & { id: string };
@@ -55,6 +63,13 @@ function toCheckpoint(rec: Record<string, unknown>): EnrichmentCheckpointRecord 
     validCount: Number(rec.validCount) ?? 0,
     profileJson: rec.profileJson != null ? String(rec.profileJson) : null,
     errorMessage: rec.errorMessage != null ? String(rec.errorMessage) : null,
+    userId: rec.userId != null ? String(rec.userId) : null,
+    overallPercentComplete: rec.overallPercentComplete != null ? Number(rec.overallPercentComplete) : null,
+    currentPhase: rec.currentPhase != null ? String(rec.currentPhase) : null,
+    currentPhasePercent: rec.currentPhasePercent != null ? Number(rec.currentPhasePercent) : null,
+    error: rec.error != null ? String(rec.error) : null,
+    currentTrackIndex: rec.currentTrackIndex != null ? Number(rec.currentTrackIndex) : null,
+    totalTracks: rec.totalTracks != null ? Number(rec.totalTracks) : null,
   };
 }
 
@@ -106,19 +121,21 @@ function pbDateString(d: Date): string {
 }
 
 /**
- * Create a new job record (fresh run). Caller must have created the in-memory job already.
+ * Create a new job record (fresh run). Caller supplies jobId (e.g. crypto.randomUUID()).
+ * Sets userId for ownership; progress fields are written via updateJobProgress.
  */
 export async function createCheckpointRecord(
   pb: PocketBase,
   data: {
     jobId: string;
     recordId: string;
+    userId: string | null;
     totalPoints: number;
     chunkSize: number;
   }
 ): Promise<EnrichmentCheckpointRecord> {
   const now = pbDateString(new Date());
-  const rec = await pb.collection(COLLECTION).create({
+  const body: Record<string, unknown> = {
     recordId: data.recordId,
     jobId: data.jobId,
     status: "running",
@@ -132,7 +149,9 @@ export async function createCheckpointRecord(
     totalAscentM: 0,
     totalDescentM: 0,
     validCount: 0,
-  });
+  };
+  if (data.userId != null) body.userId = data.userId;
+  const rec = await pb.collection(COLLECTION).create(body);
   return toCheckpoint(rec as Record<string, unknown>);
 }
 
@@ -232,6 +251,7 @@ export async function markCheckpointFailed(
   await pb.collection(COLLECTION).update((existing as { id: string }).id, {
     status: resumable ? "resumable" : "failed",
     errorMessage,
+    error: errorMessage,
     updatedAt: now,
     lastHeartbeatAt: now,
   });
@@ -256,4 +276,75 @@ export async function markCheckpointCancelled(
     lastHeartbeatAt: now,
   });
   return true;
+}
+
+/**
+ * Get enrichment job by jobId. Used by progress API and for ownership checks.
+ */
+export async function getJobByJobId(
+  pb: PocketBase,
+  jobId: string
+): Promise<EnrichmentCheckpointRecord | null> {
+  try {
+    const list = await pb.collection(COLLECTION).getList(1, 1, {
+      filter: `jobId = "${jobId}"`,
+    });
+    const item = list.items[0];
+    if (!item) return null;
+    return toCheckpoint(item as Record<string, unknown>);
+  } catch {
+    return null;
+  }
+}
+
+/** Progress update payload for updateJobProgress. Only provided fields are written. */
+export type JobProgressUpdate = {
+  status?: EnrichmentJobStatus;
+  overallPercentComplete?: number;
+  currentPhase?: string;
+  currentPhasePercent?: number;
+  processedPoints?: number;
+  totalPoints?: number;
+  currentTrackIndex?: number;
+  totalTracks?: number;
+  error?: string;
+};
+
+/**
+ * Write progress (and optionally status/error) to the enrichment_jobs record.
+ * Call at a practical cadence (e.g. every 1–2 s or every N chunks), not on every point.
+ * When checkpointRecordId is provided, updates that record; otherwise looks up by jobId.
+ */
+export async function updateJobProgress(
+  pb: PocketBase,
+  jobId: string,
+  update: JobProgressUpdate,
+  checkpointRecordId?: string | null
+): Promise<void> {
+  const now = pbDateString(new Date());
+  let recordIdToUpdate: string;
+  if (checkpointRecordId) {
+    recordIdToUpdate = checkpointRecordId;
+  } else {
+    const list = await pb.collection(COLLECTION).getList(1, 1, {
+      filter: `jobId = "${jobId}"`,
+    });
+    const existing = list.items[0];
+    if (!existing) return;
+    recordIdToUpdate = (existing as { id: string }).id;
+  }
+  const body: Record<string, unknown> = {
+    updatedAt: now,
+    lastHeartbeatAt: now,
+  };
+  if (update.status != null) body.status = update.status;
+  if (update.overallPercentComplete != null) body.overallPercentComplete = update.overallPercentComplete;
+  if (update.currentPhase != null) body.currentPhase = update.currentPhase;
+  if (update.currentPhasePercent != null) body.currentPhasePercent = update.currentPhasePercent;
+  if (update.processedPoints != null) body.processedPoints = update.processedPoints;
+  if (update.totalPoints != null) body.totalPoints = update.totalPoints;
+  if (update.currentTrackIndex != null) body.currentTrackIndex = update.currentTrackIndex;
+  if (update.totalTracks != null) body.totalTracks = update.totalTracks;
+  if (update.error != null) body.error = update.error;
+  await pb.collection(COLLECTION).update(recordIdToUpdate, body);
 }

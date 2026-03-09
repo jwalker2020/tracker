@@ -1,6 +1,6 @@
 import PocketBase from "pocketbase";
 
-function getPocketBaseUrl() {
+export function getPocketBaseUrl(): string {
   const url = process.env.NEXT_PUBLIC_PB_URL;
 
   if (!url) {

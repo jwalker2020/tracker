@@ -53,6 +53,8 @@ export type GpxFileRecord = {
   name: string;
   file: string;
   uploadedBy?: string;
+  /** Owner (PocketBase user id). Set for multi-user isolation. */
+  user?: string;
   boundsJson: string;
   centerLat: number;
   centerLng: number;
@@ -207,8 +209,14 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
 
 const COLLECTION = "gpx_files";
 
-export async function getGpxFilesList(): Promise<GpxFileRecord[]> {
-  const res = await pb.collection(COLLECTION).getList<GpxFileRecord>(1, 500);
+/**
+ * Returns GPX file records for the given user. Only records owned by that user are returned.
+ * Legacy records with no user are excluded.
+ */
+export async function getGpxFilesList(userId: string): Promise<GpxFileRecord[]> {
+  const res = await pb.collection(COLLECTION).getList<GpxFileRecord>(1, 500, {
+    filter: `user = "${userId}"`,
+  });
   res.items.sort((a, b) => {
     const aOrder = a.sortOrder ?? Infinity;
     const bOrder = b.sortOrder ?? Infinity;
