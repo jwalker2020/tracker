@@ -115,6 +115,8 @@ export type GpxFileRecordForDisplay = Omit<
   totalDescentFt?: number;
   /** Per-track enrichment (feet). Use for track popup and filtering. */
   enrichedTracks?: EnrichedTrackSummaryForDisplay[];
+  /** When set, this file has an active (running/resumable) enrichment job; use for working indicator and progress polling. */
+  activeEnrichmentJobId?: string;
 };
 
 /** Convert internal (meters) record to display (feet) for client/UI. */

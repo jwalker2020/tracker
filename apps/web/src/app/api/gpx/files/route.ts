@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUserId } from "@/lib/auth";
 import pb from "@/lib/pocketbase";
 import { getGpxFilesList, gpxRecordToDisplay } from "@/lib/gpx";
+import { getActiveEnrichmentJobIdsForRecordIds } from "@/app/api/gpx/enrichment-checkpoint";
 
 const COLLECTION = "gpx_files";
 
@@ -16,7 +17,12 @@ export async function GET(request: Request) {
   try {
     const files = await getGpxFilesList(userId);
     const forDisplay = files.map(gpxRecordToDisplay);
-    return NextResponse.json(forDisplay);
+    const recordIds = files.map((f) => f.id);
+    const activeJobByRecordId = await getActiveEnrichmentJobIdsForRecordIds(pb, recordIds, userId);
+    const withActiveJobs = forDisplay.map((f) =>
+      activeJobByRecordId[f.id] ? { ...f, activeEnrichmentJobId: activeJobByRecordId[f.id] } : f
+    );
+    return NextResponse.json(withActiveJobs);
   } catch (err) {
     console.error("[GET /api/gpx/files]", err);
     return NextResponse.json([]);

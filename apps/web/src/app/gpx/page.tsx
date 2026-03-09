@@ -1,6 +1,8 @@
 import { headers } from "next/headers";
 import { getCurrentUserIdFromHeaders } from "@/lib/auth";
 import { getGpxFilesList, gpxRecordToDisplay, type GpxFileRecordForDisplay } from "@/lib/gpx";
+import { getActiveEnrichmentJobIdsForRecordIds } from "@/app/api/gpx/enrichment-checkpoint";
+import pb from "@/lib/pocketbase";
 import { GpxView } from "@/components/gpx/GpxView";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { LogoutButton } from "@/components/auth/LogoutButton";
@@ -21,6 +23,13 @@ export default async function GpxPage() {
       if (userId) {
         const raw = await getGpxFilesList(userId);
         initialFiles = raw.map(gpxRecordToDisplay);
+        const recordIds = raw.map((r) => r.id);
+        const activeJobByRecordId = await getActiveEnrichmentJobIdsForRecordIds(pb, recordIds, userId);
+        initialFiles = initialFiles.map((f) =>
+          activeJobByRecordId[f.id]
+            ? { ...f, activeEnrichmentJobId: activeJobByRecordId[f.id] }
+            : f
+        );
       }
     } catch {
       initialFiles = [];

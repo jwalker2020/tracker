@@ -45,7 +45,15 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
   const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP_ID);
   const [hillshadeMode, setHillshadeMode] = useState<HillshadeMode>(DEFAULT_HILLSHADE_MODE);
   const [parcelsEnabled, setParcelsEnabled] = useState(false);
-  const [activeEnrichmentByFileId, setActiveEnrichmentByFileId] = useState<Record<string, string>>({});
+  const [activeEnrichmentByFileId, setActiveEnrichmentByFileId] = useState<Record<string, string>>(
+    () => {
+      const m: Record<string, string> = {};
+      initialFiles.forEach((f) => {
+        if (f.activeEnrichmentJobId) m[f.id] = f.activeEnrichmentJobId;
+      });
+      return m;
+    }
+  );
 
   const refetch = useCallback(async () => {
     setError(undefined);
@@ -56,6 +64,13 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
       const list = (await res.json()) as GpxFileRecordForDisplay[];
       setFiles(list);
       setOrderedFileIds(list.map((f) => f.id));
+      setActiveEnrichmentByFileId((prev) => {
+        const next: Record<string, string> = {};
+        list.forEach((f) => {
+          if (f.activeEnrichmentJobId) next[f.id] = f.activeEnrichmentJobId;
+        });
+        return next;
+      });
     } catch {
       setError("Could not load GPX files.");
     } finally {
@@ -149,18 +164,18 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
               });
             }}
           />
-          <button
-            type="button"
-            onClick={deleteSelected}
-            disabled={selectedIds.size === 0 || deleting}
-            className="mt-3 w-full rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm font-medium text-red-200 hover:bg-red-900/40 disabled:opacity-50 disabled:hover:bg-red-950/40"
-          >
-            {deleting ? "Deleting…" : "Delete selected"}
-          </button>
         </section>
         <section>
-          <h2 className="mb-3 text-sm font-semibold text-slate-100">Selection</h2>
-          <div className="flex flex-wrap gap-2">
+          <h2 className="mb-3 text-sm font-semibold text-slate-100">Files</h2>
+          <GpxFileList
+            files={files}
+            orderedFileIds={orderedFileIds}
+            selectedIds={selectedIds}
+            onToggle={onToggle}
+            onReorder={onReorder}
+            activeEnrichmentJobByFileId={activeEnrichmentByFileId}
+          />
+          <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => setSelectedIds(new Set())}
@@ -179,17 +194,14 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
               Fit to selection
             </button>
           </div>
-        </section>
-        <section>
-          <h2 className="mb-3 text-sm font-semibold text-slate-100">Files</h2>
-          <GpxFileList
-            files={files}
-            orderedFileIds={orderedFileIds}
-            selectedIds={selectedIds}
-            onToggle={onToggle}
-            onReorder={onReorder}
-            activeEnrichmentJobByFileId={activeEnrichmentByFileId}
-          />
+          <button
+            type="button"
+            onClick={deleteSelected}
+            disabled={selectedIds.size === 0 || deleting}
+            className="mt-3 w-full rounded border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm font-medium text-red-200 hover:bg-red-900/40 disabled:opacity-50 disabled:hover:bg-red-950/40"
+          >
+            {deleting ? "Deleting…" : "Delete selected"}
+          </button>
         </section>
         <GpxLegend selectedFiles={selectedFiles} />
         <section>

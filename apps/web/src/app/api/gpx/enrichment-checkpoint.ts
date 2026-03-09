@@ -348,3 +348,66 @@ export async function updateJobProgress(
   if (update.error != null) body.error = update.error;
   await pb.collection(COLLECTION).update(recordIdToUpdate, body);
 }
+
+/** Incomplete states: job is not finished and can be resumed after restart. */
+const INCOMPLETE_STATUSES = ["running", "resumable"];
+
+/**
+ * List incomplete enrichment jobs (running or resumable). Optionally filter by userId.
+ * Returns at most one job per recordId (most recent by updatedAt). Used for startup resume.
+ */
+export async function getIncompleteEnrichmentJobs(
+  pb: PocketBase,
+  userId?: string | null
+): Promise<EnrichmentCheckpointRecord[]> {
+  try {
+    const filter =
+      userId && userId.trim()
+        ? `(status = "running" || status = "resumable") && userId = "${userId}"`
+        : "status = \"running\" || status = \"resumable\"";
+    const list = await pb.collection(COLLECTION).getList(1, 500, {
+      filter,
+      sort: "-updatedAt",
+    });
+    const seen = new Set<string>();
+    const out: EnrichmentCheckpointRecord[] = [];
+    for (const item of list.items) {
+      const rec = toCheckpoint(item as Record<string, unknown>);
+      if (seen.has(rec.recordId)) continue;
+      seen.add(rec.recordId);
+      out.push(rec);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * For the given record IDs, return map of recordId -> jobId for those that have an active (running/resumable) job.
+ * Optionally filter by userId so only the current user's jobs are returned.
+ */
+export async function getActiveEnrichmentJobIdsForRecordIds(
+  pb: PocketBase,
+  recordIds: string[],
+  userId?: string | null
+): Promise<Record<string, string>> {
+  if (recordIds.length === 0) return {};
+  try {
+    const idsFilter = recordIds.map((id) => `recordId = "${id}"`).join(" || ");
+    const statusFilter = "status = \"running\" || status = \"resumable\"";
+    const userFilter = userId && userId.trim() ? ` && userId = "${userId}"` : "";
+    const list = await pb.collection(COLLECTION).getList(1, 500, {
+      filter: `(${idsFilter}) && (${statusFilter})${userFilter}`,
+      sort: "-updatedAt",
+    });
+    const out: Record<string, string> = {};
+    for (const item of list.items) {
+      const rec = toCheckpoint(item as Record<string, unknown>);
+      if (!out[rec.recordId]) out[rec.recordId] = rec.jobId;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
