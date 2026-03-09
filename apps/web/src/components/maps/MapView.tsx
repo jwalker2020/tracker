@@ -89,10 +89,14 @@ function FitToSelection({
   fitToSelectionTrigger: number;
 }) {
   const map = useMap();
+  const filesRef = useRef(files);
+  filesRef.current = files;
   useEffect(() => {
-    if (fitToSelectionTrigger === 0 || files.length === 0) return;
+    if (fitToSelectionTrigger === 0) return;
+    const currentFiles = filesRef.current;
+    if (currentFiles.length === 0) return;
     const boundsList: L.LatLngBounds[] = [];
-    for (const f of files) {
+    for (const f of currentFiles) {
       const b = parseBoundsJson(f.boundsJson);
       if (b) boundsList.push(b);
     }
@@ -102,7 +106,7 @@ function FitToSelection({
       combined.extend(boundsList[i]!);
     }
     map.fitBounds(combined, { padding: [24, 24], maxZoom: 16 });
-  }, [map, files, fitToSelectionTrigger]);
+  }, [map, fitToSelectionTrigger]);
   return null;
 }
 
@@ -414,7 +418,7 @@ export function MapView({
               zIndex={1}
             />
           )}
-          {parcelsEnabled && <ParcelOverlay enabled={parcelsEnabled} />}
+          <ParcelOverlay enabled={parcelsEnabled} />
           {/* GpxOverlay and MapHoverMarker render above parcel layer so track click/hover work. */}
           <GpxOverlay
             baseUrl={baseUrl}
