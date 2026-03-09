@@ -373,6 +373,7 @@ export async function getIncompleteEnrichmentJobs(
     const out: EnrichmentCheckpointRecord[] = [];
     for (const item of list.items) {
       const rec = toCheckpoint(item as Record<string, unknown>);
+      if (rec.status === "cancelled" || rec.status === "completed" || rec.status === "failed") continue;
       if (seen.has(rec.recordId)) continue;
       seen.add(rec.recordId);
       out.push(rec);

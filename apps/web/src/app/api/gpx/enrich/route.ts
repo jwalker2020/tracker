@@ -93,7 +93,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true, jobId, resumed: false });
       }
 
-      isResume = checkpoint.nextPointIndex > 0;
+      // Resumable or stale running: do not start runner here (instrumentation resumes on startup).
+      // Only refresh progress for the client and return jobId so UI can poll.
+      isResume = true;
       const total = checkpoint.totalPoints ?? 0;
       const processed = checkpoint.processedPoints ?? 0;
       const phasePct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
@@ -107,6 +109,8 @@ export async function POST(request: Request) {
         currentPhasePercent: phasePct,
         overallPercentComplete: Math.min(99, overall),
       }, checkpointRecordId);
+      startProgressLogging(jobId, checkpointRecordId, true);
+      return NextResponse.json({ ok: true, jobId, resumed: true });
     } else {
       jobId = crypto.randomUUID();
       isResume = false;
