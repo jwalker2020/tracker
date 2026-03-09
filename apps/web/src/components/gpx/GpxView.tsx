@@ -20,7 +20,6 @@ const HILLSHADE_FOR_BASEMAP: Record<string, HillshadeMode> = {
 };
 import { GpxUploadForm } from "./GpxUploadForm";
 import { GpxFileList } from "./GpxFileList";
-import { GpxLegend } from "./GpxLegend";
 
 const MapView = dynamic(() => import("@/components/maps/MapView").then((m) => ({ default: m.MapView })), {
   ssr: false,
@@ -203,7 +202,6 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
             {deleting ? "Deleting…" : "Delete selected"}
           </button>
         </section>
-        <GpxLegend selectedFiles={selectedFiles} />
         <section>
           <h2 className="mb-2 text-sm font-semibold text-slate-100">Basemap</h2>
           <select
