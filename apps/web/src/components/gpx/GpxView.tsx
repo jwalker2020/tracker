@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 import { BASEMAPS, DEFAULT_BASEMAP_ID } from "@/lib/maps/basemaps";
@@ -20,6 +20,7 @@ const HILLSHADE_FOR_BASEMAP: Record<string, HillshadeMode> = {
 };
 import { GpxUploadForm } from "./GpxUploadForm";
 import { GpxFileList } from "./GpxFileList";
+import { TrackFilters, type TrackFilterState } from "./TrackFilters";
 
 const MapView = dynamic(() => import("@/components/maps/MapView").then((m) => ({ default: m.MapView })), {
   ssr: false,
@@ -119,6 +120,107 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
     .map((id) => files.find((f) => f.id === id))
     .filter((f): f is GpxFileRecordForDisplay => f != null);
 
+  const dataBounds = useMemo(() => {
+    const tracks: { grade: number; curviness: number }[] = [];
+    for (const f of selectedFiles) {
+      const list = f.enrichedTracks ?? [];
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        const grade =
+          typeof t?.averageGradePct === "number" && Number.isFinite(t.averageGradePct)
+            ? t.averageGradePct
+            : NaN;
+        const curviness =
+          typeof t?.averageCurvinessDegPerMile === "number" &&
+          Number.isFinite(t.averageCurvinessDegPerMile)
+            ? t.averageCurvinessDegPerMile
+            : NaN;
+        tracks.push({ grade, curviness });
+      }
+    }
+    const grades = tracks.map((tr) => tr.grade).filter((g) => Number.isFinite(g));
+    const curvinesses = tracks.map((tr) => tr.curviness).filter((c) => Number.isFinite(c));
+    const gradeMin = grades.length > 0 ? Math.min(...grades) : 0;
+    const gradeMax = grades.length > 0 ? Math.max(...grades) : 0;
+    const curvinessMin = curvinesses.length > 0 ? Math.min(...curvinesses) : 0;
+    const curvinessMax = curvinesses.length > 0 ? Math.max(...curvinesses) : 0;
+    return {
+      gradeMin,
+      gradeMax: gradeMax > gradeMin ? gradeMax : gradeMin + 1,
+      curvinessMin,
+      curvinessMax: curvinessMax > curvinessMin ? curvinessMax : curvinessMin + 1,
+    };
+  }, [selectedFiles]);
+
+  const [filterState, setFilterState] = useState<TrackFilterState>({
+    gradeMin: 0,
+    gradeMax: 1,
+    curvinessMin: 0,
+    curvinessMax: 1,
+  });
+
+  const selectionKey = useMemo(
+    () => selectedFiles.map((f) => f.id).sort().join(","),
+    [selectedFiles]
+  );
+  useEffect(() => {
+    const gradeMin = Math.max(0, Math.min(100, dataBounds.gradeMin));
+    const gradeMax = Math.max(0, Math.min(100, dataBounds.gradeMax));
+    setFilterState({
+      gradeMin,
+      gradeMax: gradeMax > gradeMin ? gradeMax : Math.min(100, gradeMin + 1),
+      curvinessMin: dataBounds.curvinessMin,
+      curvinessMax: dataBounds.curvinessMax,
+    });
+  }, [selectionKey, dataBounds.gradeMin, dataBounds.gradeMax, dataBounds.curvinessMin, dataBounds.curvinessMax]);
+
+  const { visibleTrackKeys, totalTracks, visibleCount } = useMemo(() => {
+    const tracks: { fileId: string; trackIndex: number; grade: number; curviness: number }[] = [];
+    for (const f of selectedFiles) {
+      const list = f.enrichedTracks ?? [];
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        const grade =
+          typeof t?.averageGradePct === "number" && Number.isFinite(t.averageGradePct)
+            ? t.averageGradePct
+            : NaN;
+        const curviness =
+          typeof t?.averageCurvinessDegPerMile === "number" &&
+          Number.isFinite(t.averageCurvinessDegPerMile)
+            ? t.averageCurvinessDegPerMile
+            : NaN;
+        tracks.push({ fileId: f.id, trackIndex: i, grade, curviness });
+      }
+    }
+    const keys = new Set<string>();
+    const dataGradeRange = dataBounds.gradeMax - dataBounds.gradeMin;
+    const dataCurvRange = dataBounds.curvinessMax - dataBounds.curvinessMin;
+    const filterGradeRange = filterState.gradeMax - filterState.gradeMin;
+    const filterCurvRange = filterState.curvinessMax - filterState.curvinessMin;
+    const atFullRange =
+      (filterState.gradeMin <= dataBounds.gradeMin &&
+        filterState.gradeMax >= dataBounds.gradeMax &&
+        filterState.curvinessMin <= dataBounds.curvinessMin &&
+        filterState.curvinessMax >= dataBounds.curvinessMax) ||
+      (dataGradeRange > 1 &&
+        dataCurvRange > 1 &&
+        filterGradeRange <= 1 &&
+        filterCurvRange <= 1);
+    for (const tr of tracks) {
+      if (!Number.isFinite(tr.grade) || !Number.isFinite(tr.curviness)) continue;
+      if (
+        atFullRange ||
+        (tr.grade >= filterState.gradeMin &&
+          tr.grade <= filterState.gradeMax &&
+          tr.curviness >= filterState.curvinessMin &&
+          tr.curviness <= filterState.curvinessMax)
+      ) {
+        keys.add(`${tr.fileId}-${tr.trackIndex}`);
+      }
+    }
+    return { visibleTrackKeys: keys, totalTracks: tracks.length, visibleCount: keys.size };
+  }, [selectedFiles, filterState, dataBounds]);
+
   const onReorder = useCallback(
     async (newOrderedIds: string[]) => {
       setOrderedFileIds(newOrderedIds);
@@ -202,6 +304,29 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
             {deleting ? "Deleting…" : "Delete selected"}
           </button>
         </section>
+        {totalTracks > 0 && (
+          <TrackFilters
+            filterState={filterState}
+            onFilterChange={setFilterState}
+            gradeBounds={{ dataMin: dataBounds.gradeMin, dataMax: dataBounds.gradeMax }}
+            curvinessBounds={{
+              dataMin: dataBounds.curvinessMin,
+              dataMax: dataBounds.curvinessMax,
+            }}
+            totalTracks={totalTracks}
+            visibleCount={visibleCount}
+            onReset={() => {
+              const gradeMin = Math.max(0, Math.min(100, dataBounds.gradeMin));
+              const gradeMax = Math.max(0, Math.min(100, dataBounds.gradeMax));
+              setFilterState({
+                gradeMin,
+                gradeMax: gradeMax > gradeMin ? gradeMax : Math.min(100, gradeMin + 1),
+                curvinessMin: dataBounds.curvinessMin,
+                curvinessMax: dataBounds.curvinessMax,
+              });
+            }}
+          />
+        )}
         <section>
           <h2 className="mb-2 text-sm font-semibold text-slate-100">Basemap</h2>
           <select
@@ -255,6 +380,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
         <MapView
           baseUrl={baseUrl}
           files={selectedFiles}
+          visibleTrackKeys={totalTracks > 0 ? visibleTrackKeys : null}
           fitToSelectionTrigger={fitToSelectionTrigger}
           basemapId={basemapId}
           onBasemapIdChange={setBasemapId}

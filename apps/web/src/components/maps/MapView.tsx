@@ -36,6 +36,8 @@ const FALLBACK_ATTRIBUTION = "© OpenStreetMap contributors";
 type MapViewProps = {
   baseUrl: string;
   files: GpxFileRecordForDisplay[];
+  /** When provided, only tracks whose key (fileId-trackIndex) is in this set are shown. Omit or null = show all. */
+  visibleTrackKeys?: Set<string> | null;
   fitToSelectionTrigger?: number;
   className?: string;
   /** When provided with onBasemapIdChange, basemap is controlled by parent (picker rendered outside MapView). */
@@ -113,11 +115,13 @@ function FitToSelection({
 function GpxOverlay({
   baseUrl,
   files,
+  visibleTrackKeys,
   selectedTrack,
   setSelectedTrack,
 }: {
   baseUrl: string;
   files: GpxFileRecordForDisplay[];
+  visibleTrackKeys: Set<string> | null | undefined;
   selectedTrack: SelectedTrack | null;
   setSelectedTrack: (v: SelectedTrack | null) => void;
 }) {
@@ -149,6 +153,8 @@ function GpxOverlay({
         const { tracks } = await getDisplayGeometry(rec, baseUrl);
         if (cancelled || !overlay) return;
         tracks.forEach((track, trackIndex) => {
+          const key = `${rec.id}-${trackIndex}`;
+          if (visibleTrackKeys != null && !visibleTrackKeys.has(key)) return;
           if (track.points.length < 2) return;
           const latlngs = track.points.map(([lat, lng]) => L.latLng(lat, lng));
           const poly = L.polyline(latlngs, { color, weight: VISIBLE_WEIGHT });
@@ -178,7 +184,7 @@ function GpxOverlay({
       cancelled = true;
       map.off("click", onMapClick);
     };
-  }, [map, baseUrl, files, setSelectedTrack]);
+  }, [map, baseUrl, files, visibleTrackKeys, setSelectedTrack]);
 
   useEffect(() => {
     for (const ref of trackLayersRef.current) {
@@ -309,6 +315,7 @@ function parseProfileJson(json: string | null): ProfilePoint[] | null {
 export function MapView({
   baseUrl,
   files: filesProp,
+  visibleTrackKeys = null,
   fitToSelectionTrigger = 0,
   className = "",
   basemapId: controlledBasemapId,
@@ -349,6 +356,16 @@ export function MapView({
   const [selectedTrack, setSelectedTrack] = useState<SelectedTrack | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [selectedTrackPoints, setSelectedTrackPoints] = useState<[number, number][] | null>(null);
+
+  useEffect(() => {
+    if (
+      visibleTrackKeys != null &&
+      selectedTrack &&
+      !visibleTrackKeys.has(`${selectedTrack.fileId}-${selectedTrack.trackIndex}`)
+    ) {
+      setSelectedTrack(null);
+    }
+  }, [visibleTrackKeys, selectedTrack]);
 
   useEffect(() => {
     setHoveredIndex(null);
@@ -423,6 +440,7 @@ export function MapView({
           <GpxOverlay
             baseUrl={baseUrl}
             files={files}
+            visibleTrackKeys={visibleTrackKeys}
             selectedTrack={selectedTrack}
             setSelectedTrack={setSelectedTrack}
           />
