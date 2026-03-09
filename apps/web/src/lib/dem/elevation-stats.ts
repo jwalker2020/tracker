@@ -3,6 +3,41 @@ import type { ElevationStats } from "./types";
 /** Elevation value that is valid for stats (finite number). Null = nodata / missing. */
 export type ElevationValue = number | null;
 
+/** Moving average window size for elevation smoothing. Odd number recommended (e.g. 5, 7, 9). */
+export const ELEVATION_SMOOTH_WINDOW_SIZE = 7;
+
+/** Minimum elevation change (m) to count toward ascent/descent. Changes smaller than this are ignored to reduce noise. ~0.3 m ≈ 1 ft. */
+export const ELEVATION_CHANGE_THRESHOLD_M = 0.3048;
+
+/**
+ * Smooth an elevation series with a centered moving average.
+ * Uses a partial window at the ends. Window should be odd; if even, behaves as windowSize - 1.
+ */
+export function smoothElevationSeries(
+  elevations: ReadonlyArray<number>,
+  windowSize: number
+): number[] {
+  const n = elevations.length;
+  if (n === 0 || windowSize < 1) return [...elevations];
+  const half = Math.floor(Math.max(1, windowSize) / 2);
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const start = Math.max(0, i - half);
+    const end = Math.min(n, i + half + 1);
+    let sum = 0;
+    let count = 0;
+    for (let j = start; j < end; j++) {
+      const v = elevations[j];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        sum += v;
+        count++;
+      }
+    }
+    out.push(count > 0 ? sum / count : elevations[i] ?? 0);
+  }
+  return out;
+}
+
 /** Safe division: returns 0 when divisor is not positive finite. */
 function safeDivide(num: number, denom: number): number {
   if (typeof num !== "number" || typeof denom !== "number") return 0;
@@ -17,13 +52,21 @@ export function isValidElevation(e: ElevationValue): e is number {
   return e != null && typeof e === "number" && Number.isFinite(e);
 }
 
+export type ComputeElevationStatsOptions = {
+  /** Ignore segment elevation changes smaller than this (m) for ascent/descent. Reduces noise. */
+  ascentDescentThresholdM?: number;
+};
+
 /**
  * Compute elevation statistics from a sequence of elevations (meters).
  * Nodata (null) and non-finite values are skipped for min/max and ascent/descent.
+ * Optional ascentDescentThresholdM: segment changes smaller than this are not counted toward ascent/descent.
  */
 export function computeElevationStats(
-  elevations: ReadonlyArray<ElevationValue>
+  elevations: ReadonlyArray<ElevationValue>,
+  options?: ComputeElevationStatsOptions
 ): ElevationStats {
+  const thresholdM = options?.ascentDescentThresholdM ?? 0;
   const valid = elevations.filter(isValidElevation);
   const totalCount = elevations.length;
   const validCount = valid.length;
@@ -55,10 +98,11 @@ export function computeElevationStats(
     const curr = elevations[i];
     if (!isValidElevation(prev) || !isValidElevation(curr)) continue;
     const d = curr - prev;
-    if (Number.isFinite(d)) {
-      if (d > 0) totalAscentM += d;
-      else totalDescentM += -d;
-    }
+    if (!Number.isFinite(d)) continue;
+    const absD = Math.abs(d);
+    if (absD < thresholdM) continue;
+    if (d > 0) totalAscentM += d;
+    else totalDescentM += -d;
   }
 
   return {
@@ -79,12 +123,14 @@ export function computeElevationStats(
  * - averageGradePct: signed grade = (totalAscent - totalDescent) / distance × 100 (negative for net descent).
  * - averageSteepnessPct: absolute grade = (totalAscent + totalDescent) / distance × 100 (terrain steepness).
  * Returns 0 for grade/steepness when distance is zero or result is non-finite.
+ * Optional options.ascentDescentThresholdM: segment changes below this are not counted toward ascent/descent.
  */
 export function computeElevationStatsWithDistance(
   elevations: ReadonlyArray<ElevationValue>,
-  horizontalDistanceM: number
+  horizontalDistanceM: number,
+  options?: ComputeElevationStatsOptions
 ): ElevationStats {
-  const stats = computeElevationStats(elevations);
+  const stats = computeElevationStats(elevations, options);
   const safeDistance = Number.isFinite(horizontalDistanceM) && horizontalDistanceM > 0
     ? horizontalDistanceM
     : 0;

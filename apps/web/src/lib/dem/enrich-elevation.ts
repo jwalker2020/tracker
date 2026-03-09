@@ -7,8 +7,11 @@ import { loadTileIndex } from "./tile-index";
 import { DemRasterSampler } from "./sampler";
 import {
   computeElevationStatsWithDistance,
+  ELEVATION_CHANGE_THRESHOLD_M,
+  ELEVATION_SMOOTH_WINDOW_SIZE,
   isValidElevation,
   mergeChunkElevationState,
+  smoothElevationSeries,
   type AccumulatedElevationState,
 } from "./elevation-stats";
 import type { EnrichedTrackSummary } from "./types";
@@ -464,25 +467,42 @@ export async function enrichSingleTrackFromIndex(
 
   if (!options?.sharedSampler) sampler.closeAll();
 
-  // Signed average grade = (totalAscent - totalDescent) / horizontal distance × 100 (negative for net descent).
-  // Average steepness = (totalAscent + totalDescent) / horizontal distance × 100 (all segments, always ≥ 0).
-  // Zero distance or non-finite totals yield 0; segments with missing elevation are already excluded from ascent/descent.
-  const netElevationM = accumulatedState.totalAscentM - accumulatedState.totalDescentM;
-  const totalClimbM = accumulatedState.totalAscentM + accumulatedState.totalDescentM;
-  const rawGrade = safeDistanceM > 0 ? (netElevationM / safeDistanceM) * 100 : 0;
-  const rawSteepness = safeDistanceM > 0 ? (totalClimbM / safeDistanceM) * 100 : 0;
-  const averageGradePct = Number.isFinite(rawGrade) ? rawGrade : 0;
-  const averageSteepnessPct = Number.isFinite(rawSteepness) ? rawSteepness : 0;
-  const stats: ElevationStats = {
-    minElevationM: accumulatedState.minElevationM,
-    maxElevationM: accumulatedState.maxElevationM,
-    totalAscentM: accumulatedState.totalAscentM,
-    totalDescentM: accumulatedState.totalDescentM,
-    averageGradePct,
-    averageSteepnessPct,
-    validCount: accumulatedState.validCount,
-    totalCount: totalPoints,
-  };
+  // Use smoothed elevation series for stats and profile display to reduce DEM/GPS noise.
+  // Raw profile is kept in profileSoFar for debugging; we derive smoothed profile and stats from it.
+  const rawElevations = profileSoFar.map((p) => p.e);
+  const smoothedElevations =
+    rawElevations.length > 0
+      ? smoothElevationSeries(rawElevations, ELEVATION_SMOOTH_WINDOW_SIZE)
+      : [];
+  const statsFromSmoothed =
+    smoothedElevations.length > 0
+      ? computeElevationStatsWithDistance(smoothedElevations, safeDistanceM, {
+          ascentDescentThresholdM: ELEVATION_CHANGE_THRESHOLD_M,
+        })
+      : null;
+
+  const stats: ElevationStats = statsFromSmoothed
+    ? {
+        ...statsFromSmoothed,
+        totalCount: totalPoints,
+        validCount: accumulatedState.validCount,
+      }
+    : {
+        minElevationM: accumulatedState.minElevationM,
+        maxElevationM: accumulatedState.maxElevationM,
+        totalAscentM: accumulatedState.totalAscentM,
+        totalDescentM: accumulatedState.totalDescentM,
+        averageGradePct: 0,
+        averageSteepnessPct: 0,
+        validCount: accumulatedState.validCount,
+        totalCount: totalPoints,
+      };
+
+  const profileForReturn: ElevationProfilePoint[] =
+    smoothedElevations.length > 0 && smoothedElevations.length === profileSoFar.length
+      ? profileSoFar.map((p, i) => ({ ...p, e: smoothedElevations[i]! }))
+      : profileSoFar;
+
   const hint =
     accumulatedState.validCount === 0
       ? ("all_nodata" as const)
@@ -499,7 +519,7 @@ export async function enrichSingleTrackFromIndex(
     stats,
     distanceM: safeDistanceM,
     elevations: [],
-    profile: profileSoFar.length > 0 ? profileSoFar : undefined,
+    profile: profileForReturn.length > 0 ? profileForReturn : undefined,
     elevationHint: hint,
   };
 }
