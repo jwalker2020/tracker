@@ -281,6 +281,7 @@ export function GpxUploadForm({
     const { file, gpxText } = pendingUpload;
     setSplitDialogOpen(null);
     setPendingUpload(null);
+    setSplitCountError(null);
     const form = formRef.current;
     formRef.current = null;
     setUploading(true);

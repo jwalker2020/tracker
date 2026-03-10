@@ -2,29 +2,47 @@
  * Split a single-track GPX into N tracks by point count (evenly as possible).
  * Preserves point order and all point data (lat, lon, ele, time, etc.).
  * Use only when the GPX has exactly one track (trk or rte).
+ * Namespace-safe for GPX 1.1 default namespace.
  */
 
 const GPX_NS = "http://www.topografix.com/GPX/1/1";
 
+function getElementsByLocalName(parent: Element | Document, localName: string): Element[] {
+  const out: Element[] = [];
+  const list = parent.getElementsByTagNameNS(GPX_NS, localName);
+  if (list.length > 0) {
+    for (let i = 0; i < list.length; i++) {
+      const el = list.item(i);
+      if (el) out.push(el);
+    }
+    return out;
+  }
+  const fallback = parent.getElementsByTagName(localName);
+  for (let i = 0; i < fallback.length; i++) {
+    const el = fallback.item(i);
+    if (el) out.push(el);
+  }
+  return out;
+}
+
 function getTrkOrRte(doc: Document): { element: Element; tag: "trk" | "rte"; pointTag: string } | null {
-  const trks = doc.getElementsByTagName("trk");
-  const rtes = doc.getElementsByTagName("rte");
+  const trks = getElementsByLocalName(doc, "trk");
+  const rtes = getElementsByLocalName(doc, "rte");
   if (trks.length === 1 && rtes.length === 0) {
-    const trk = trks.item(0)!;
-    const pts = trk.getElementsByTagName("trkpt");
+    const trk = trks[0]!;
+    const pts = getElementsByLocalName(trk, "trkpt");
     if (pts.length > 0) return { element: trk, tag: "trk", pointTag: "trkpt" };
   }
   if (rtes.length === 1 && trks.length === 0) {
-    const rte = rtes.item(0)!;
-    const pts = rte.getElementsByTagName("rtept");
+    const rte = rtes[0]!;
+    const pts = getElementsByLocalName(rte, "rtept");
     if (pts.length > 0) return { element: rte, tag: "rte", pointTag: "rtept" };
   }
   return null;
 }
 
 function getTrackName(element: Element): string {
-  const nameEl = element.getElementsByTagName("name").item(0)
-    ?? Array.from(element.childNodes).find((n) => n.nodeType === 1 && (n as Element).localName === "name") as Element | undefined;
+  const nameEl = getElementsByLocalName(element, "name")[0];
   const name = nameEl?.textContent?.trim();
   return name && name.length > 0 ? name : "Track";
 }
@@ -60,18 +78,12 @@ export function splitSingleTrackGpxByPointCount(gpxText: string, n: number): str
   if (!single) return gpxText;
 
   const { element: original, tag, pointTag } = single;
-  const pointsList = original.getElementsByTagName(pointTag);
-  const pointCount = pointsList.length;
+  const points = getElementsByLocalName(original, pointTag);
+  const pointCount = points.length;
   if (pointCount === 0) return gpxText;
 
   const numParts = Math.min(n, pointCount);
   if (numParts < 2) return gpxText;
-
-  const points: Element[] = [];
-  for (let i = 0; i < pointsList.length; i++) {
-    const pt = pointsList.item(i);
-    if (pt) points.push(pt);
-  }
 
   const baseName = getTrackName(original);
   const ns =
