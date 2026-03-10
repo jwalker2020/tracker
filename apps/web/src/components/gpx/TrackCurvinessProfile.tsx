@@ -3,82 +3,41 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import ReactECharts from "echarts-for-react";
 import type { EChartsOption } from "echarts";
-import along from "@turf/along";
-import length from "@turf/length";
-import { lineString } from "@turf/helpers";
+import type { ProfilePoint } from "./TrackElevationProfile";
 
-/** Profile point: distance miles (d), elevation ft (e), optional map coords for hover sync. */
-export type ProfilePoint = { d: number; e: number; lat?: number; lng?: number };
+export type CurvinessPoint = { d: number; c: number };
 
-const MILES_TO_METERS = 1609.344;
-
-/**
- * Resolve [lat, lng] for a profile index. Uses profile point coords when present,
- * else derives from track geometry by proportional distance. Shared for chart→map hover.
- */
-export function getLatLngForIndex(
-  profilePoints: ProfilePoint[] | null,
-  trackPoints: [number, number][] | null | undefined,
-  index: number
-): [number, number] | null {
-  if (!profilePoints?.length || index < 0 || index >= profilePoints.length) return null;
-  const p = profilePoints[index];
-  if (p?.lat != null && p?.lng != null) return [p.lat, p.lng];
-  if (!trackPoints || trackPoints.length < 2 || !Number.isFinite(p?.d)) return null;
-  try {
-    const line = lineString(trackPoints.map(([lat, lng]) => [lng, lat]));
-    const lenM = length(line, { units: "meters" });
-    const last = profilePoints[profilePoints.length - 1];
-    const totalMi = last?.d != null ? Number(last.d) : NaN;
-    const distM =
-      Number.isFinite(totalMi) && totalMi > 0
-        ? (p.d / totalMi) * lenM
-        : p.d * MILES_TO_METERS;
-    const clamped = Math.max(0, Math.min(distM, lenM));
-    const pt = along(line, clamped, { units: "meters" });
-    const [lng, lat] = pt.geometry.coordinates;
-    return [lat, lng];
-  } catch {
-    return null;
-  }
-}
-
-type TrackElevationProfileProps = {
+type TrackCurvinessProfileProps = {
   trackName: string;
-  /** Points (d = distance miles, e = elevation ft). Optional lat/lng for map hover sync. */
+  /** Same length as elevation profile; used for distance axis and hover index. */
   profilePoints: ProfilePoint[] | null;
-  /** Optional track geometry [lat, lng][] for hover fallback when profile has no coords. */
+  /** Per-point curviness (deg/mi); same index space as profilePoints. */
+  curvinessData: CurvinessPoint[] | null;
+  /** Optional track geometry for map hover fallback. */
   trackPoints?: [number, number][] | null;
-  /** Shared distance range so this chart aligns with the curviness chart. */
+  /** Shared distance range so this chart aligns with the elevation chart. */
   distanceRange?: { minD: number; maxD: number } | null;
   /** Shared hover index (controlled); when set, show vertical line at this index. */
   hoveredIndex?: number | null;
-  /** Called with profile point index on chart hover, null on leave. Enables map highlight. */
+  /** Called with profile index on chart hover, null on leave. */
   onHoverIndex?: (index: number | null) => void;
 };
 
-export function TrackElevationProfile({
+export function TrackCurvinessProfile({
   trackName,
   profilePoints,
+  curvinessData,
   trackPoints,
   distanceRange = null,
   hoveredIndex = null,
   onHoverIndex,
-}: TrackElevationProfileProps) {
-  const hasCoords = useMemo(
-    () =>
-      profilePoints != null &&
-      profilePoints.length > 0 &&
-      profilePoints.some((p) => p.lat != null && p.lng != null),
-    [profilePoints]
-  );
-
-  /** Enable hover→map sync when we have coords in profile OR track geometry to derive position. */
+}: TrackCurvinessProfileProps) {
   const canSyncHover = Boolean(
     onHoverIndex &&
       profilePoints &&
       profilePoints.length >= 2 &&
-      (hasCoords || (trackPoints != null && trackPoints.length >= 2))
+      curvinessData &&
+      curvinessData.length >= 2
   );
 
   const chartRef = useRef<ReactECharts>(null);
@@ -91,9 +50,9 @@ export function TrackElevationProfile({
   const scheduleHoverFlushRef = useRef<() => void>(() => {});
 
   const chartData = useMemo(() => {
-    if (!profilePoints || profilePoints.length < 2) return null;
-    return profilePoints.map((p) => [p.d, p.e] as [number, number]);
-  }, [profilePoints]);
+    if (!curvinessData || curvinessData.length < 2) return null;
+    return curvinessData.map((p) => [p.d, p.c] as [number, number]);
+  }, [curvinessData]);
 
   profilePointsRef.current = profilePoints;
   chartDataRef.current = chartData;
@@ -102,12 +61,14 @@ export function TrackElevationProfile({
   const hoverMarkLine = useMemo(() => {
     if (hoveredIndex == null || !profilePoints?.length || hoveredIndex < 0 || hoveredIndex >= profilePoints.length)
       return undefined;
-    const p = profilePoints[hoveredIndex];
-    const d = p?.d;
+    const d = profilePoints[hoveredIndex]?.d;
     if (d == null || !Number.isFinite(d)) return undefined;
-    const e = p?.e;
+    const c =
+      curvinessData && hoveredIndex >= 0 && hoveredIndex < curvinessData.length
+        ? curvinessData[hoveredIndex]?.c
+        : undefined;
     const labelText =
-      e != null && Number.isFinite(e) ? `${Math.round(e).toLocaleString()} ft` : "";
+      c != null && Number.isFinite(c) ? `${Number(c).toFixed(1)} °/mi` : "";
     return {
       silent: true,
       symbol: "none",
@@ -121,7 +82,7 @@ export function TrackElevationProfile({
       },
       data: [{ xAxis: d }],
     };
-  }, [hoveredIndex, profilePoints]);
+  }, [hoveredIndex, profilePoints, curvinessData]);
 
   const option: EChartsOption = useMemo(() => {
     if (!chartData || chartData.length < 2) return {};
@@ -129,9 +90,9 @@ export function TrackElevationProfile({
       distanceRange != null ? distanceRange.minD : Math.min(...chartData.map((d) => d[0]));
     const maxD =
       distanceRange != null ? distanceRange.maxD : Math.max(...chartData.map((d) => d[0]));
-    const minE = Math.min(...chartData.map((d) => d[1]));
-    const maxE = Math.max(...chartData.map((d) => d[1]));
-    const padE = (maxE - minE) * 0.05 || 10;
+    const minC = Math.min(...chartData.map((d) => d[1]));
+    const maxC = Math.max(...chartData.map((d) => d[1]));
+    const padC = (maxC - minC) * 0.05 || 1;
     return {
       backgroundColor: "transparent",
       grid: { left: 48, right: 16, top: 12, bottom: 32, containLabel: false },
@@ -149,12 +110,12 @@ export function TrackElevationProfile({
       },
       yAxis: {
         type: "value",
-        name: "Elevation (ft)",
+        name: "Curviness (°/mi)",
         nameLocation: "middle",
         nameGap: 36,
         nameTextStyle: { color: "#94a3b8", fontSize: 10 },
-        min: minE - padE,
-        max: maxE + padE,
+        min: Math.max(0, minC - padC),
+        max: maxC + padC,
         axisLine: { show: false },
         splitLine: { lineStyle: { color: "rgba(71, 85, 105, 0.3)" } },
         axisLabel: { color: "#64748b", fontSize: 9 },
@@ -170,8 +131,8 @@ export function TrackElevationProfile({
         formatter: (params: unknown) => {
           const p = Array.isArray(params) ? params[0] : null;
           if (!p || !p.data) return "";
-          const [distMi, elevFt] = p.data as [number, number];
-          return `<strong>Distance</strong> ${Number(distMi).toFixed(2)} mi<br/><strong>Elevation</strong> ${Math.round(Number(elevFt)).toLocaleString()} ft`;
+          const [distMi, c] = p.data as [number, number];
+          return `<strong>Distance</strong> ${Number(distMi).toFixed(2)} mi<br/><strong>Curviness</strong> ${Number(c).toFixed(1)} °/mi`;
         },
       },
       series: [
@@ -181,7 +142,7 @@ export function TrackElevationProfile({
           showSymbol: false,
           triggerLineEvent: true,
           smooth: true,
-          lineStyle: { color: "#38bdf8", width: 2 },
+          lineStyle: { color: "#a78bfa", width: 2 },
           areaStyle: {
             color: {
               type: "linear",
@@ -190,8 +151,8 @@ export function TrackElevationProfile({
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: "rgba(56, 189, 248, 0.25)" },
-                { offset: 1, color: "rgba(56, 189, 248, 0)" },
+                { offset: 0, color: "rgba(167, 139, 250, 0.25)" },
+                { offset: 1, color: "rgba(167, 139, 250, 0)" },
               ],
             },
           },
@@ -419,47 +380,40 @@ export function TrackElevationProfile({
     };
   }, []);
 
-  if (!profilePoints || profilePoints.length < 2) {
+  if (!curvinessData || curvinessData.length < 2) {
     return (
-      <div className="flex h-full items-center justify-center rounded border border-slate-700 bg-slate-900/95 px-4 text-sm text-slate-400">
-        Elevation profile not available for this track.
+      <div className="flex h-full min-h-[100px] items-center justify-center rounded border border-slate-700 bg-slate-900/95 px-4 text-sm text-slate-400">
+        Curviness profile not available for this track.
       </div>
     );
   }
 
   if (!chartData) {
     return (
-      <div className="flex h-full items-center justify-center rounded border border-slate-700 bg-slate-900/95 px-4 text-sm text-slate-400">
-        Elevation profile not available for this track.
+      <div className="flex h-full min-h-[100px] items-center justify-center rounded border border-slate-700 bg-slate-900/95 px-4 text-sm text-slate-400">
+        Curviness profile not available for this track.
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col rounded border border-slate-700 bg-slate-900/95">
+    <div className="flex flex-col rounded border border-slate-700 bg-slate-900/95">
       <div className="border-b border-slate-700 px-3 py-1.5">
         <h3 className="text-sm font-medium text-slate-200">
-          Elevation profile — {trackName}
+          Curviness profile — {trackName}
         </h3>
       </div>
-      <div className="min-h-0 flex-1 p-2">
+      <div className="h-[120px] shrink-0 p-2">
         <ReactECharts
           ref={chartRef}
           option={option}
-          style={{ height: "100%", minHeight: 160 }}
+          style={{ height: "100%", minHeight: 100 }}
           opts={{ renderer: "canvas" }}
           onEvents={onEvents}
           onChartReady={onChartReady}
           notMerge
         />
       </div>
-      {!hasCoords && (
-        <p className="px-3 pb-2 text-xs text-slate-500">
-          {trackPoints && trackPoints.length >= 2
-            ? "Re-enrich for precise hover sync (position is derived from track)."
-            : "Re-enrich this track to enable hover sync on the map."}
-        </p>
-      )}
     </div>
   );
 }

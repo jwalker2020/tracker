@@ -126,15 +126,17 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
       const list = f.enrichedTracks ?? [];
       for (let i = 0; i < list.length; i++) {
         const t = list[i];
-        const grade =
+        const rawGrade =
           typeof t?.averageGradePct === "number" && Number.isFinite(t.averageGradePct)
             ? t.averageGradePct
             : NaN;
-        const curviness =
+        const grade = Number.isFinite(rawGrade) ? Math.max(0, rawGrade) : NaN;
+        const rawCurviness =
           typeof t?.averageCurvinessDegPerMile === "number" &&
           Number.isFinite(t.averageCurvinessDegPerMile)
             ? t.averageCurvinessDegPerMile
             : NaN;
+        const curviness = Number.isFinite(rawCurviness) ? Math.max(0, rawCurviness) : NaN;
         tracks.push({ grade, curviness });
       }
     }
@@ -180,15 +182,17 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
       const list = f.enrichedTracks ?? [];
       for (let i = 0; i < list.length; i++) {
         const t = list[i];
-        const grade =
+        const rawGrade =
           typeof t?.averageGradePct === "number" && Number.isFinite(t.averageGradePct)
             ? t.averageGradePct
             : NaN;
-        const curviness =
+        const grade = Number.isFinite(rawGrade) ? Math.max(0, rawGrade) : NaN;
+        const rawCurviness =
           typeof t?.averageCurvinessDegPerMile === "number" &&
           Number.isFinite(t.averageCurvinessDegPerMile)
             ? t.averageCurvinessDegPerMile
             : NaN;
+        const curviness = Number.isFinite(rawCurviness) ? Math.max(0, rawCurviness) : NaN;
         tracks.push({ fileId: f.id, trackIndex: i, grade, curviness });
       }
     }

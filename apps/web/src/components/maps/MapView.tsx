@@ -11,7 +11,8 @@ import {
   getHillshadeLayerById,
   type HillshadeMode,
 } from "@/lib/maps/overlays";
-import { getLatLngForIndex, TrackElevationProfile, type ProfilePoint } from "@/components/gpx/TrackElevationProfile";
+import { getLatLngForIndex, type ProfilePoint } from "@/components/gpx/TrackElevationProfile";
+import { TrackProfilePanel } from "@/components/gpx/TrackProfilePanel";
 import { TrackDetailsPanel } from "@/components/gpx/TrackDetailsPanel";
 import { MapHoverMarker } from "@/components/maps/MapHoverMarker";
 import {
@@ -83,12 +84,18 @@ function parseBoundsJson(boundsJson: string): L.LatLngBounds | null {
   }
 }
 
+/** Height in px of the bottom chart panel when a track is selected; fit bounds leaves this as padding so tracks fit in the visible map. */
+const BOTTOM_PANEL_HEIGHT_PX = 320;
+
 function FitToSelection({
   files,
   fitToSelectionTrigger,
+  bottomPaddingPx = 0,
 }: {
   files: GpxFileRecordForDisplay[];
   fitToSelectionTrigger: number;
+  /** When > 0, fitBounds uses this as bottom padding so bounds fit in the visible map above the panel. */
+  bottomPaddingPx?: number;
 }) {
   const map = useMap();
   const filesRef = useRef(files);
@@ -107,8 +114,18 @@ function FitToSelection({
     for (let i = 1; i < boundsList.length; i++) {
       combined.extend(boundsList[i]!);
     }
-    map.fitBounds(combined, { padding: [24, 24], maxZoom: 16 });
-  }, [map, fitToSelectionTrigger]);
+    const padding = 24;
+    const fitOptions: L.FitBoundsOptions = {
+      maxZoom: 16,
+      ...(bottomPaddingPx > 0
+        ? {
+            paddingTopLeft: L.point(padding, padding),
+            paddingBottomRight: L.point(padding, bottomPaddingPx),
+          }
+        : { padding: L.point(padding, padding) }),
+    };
+    map.fitBounds(combined, fitOptions);
+  }, [map, fitToSelectionTrigger, bottomPaddingPx]);
   return null;
 }
 
@@ -445,11 +462,15 @@ export function MapView({
             setSelectedTrack={setSelectedTrack}
           />
           <MapHoverMarker hoveredLatLng={hoveredLatLng} />
-          <FitToSelection files={files} fitToSelectionTrigger={fitToSelectionTrigger} />
+          <FitToSelection
+            files={files}
+            fitToSelectionTrigger={fitToSelectionTrigger}
+            bottomPaddingPx={selectedTrack ? BOTTOM_PANEL_HEIGHT_PX : 0}
+          />
         </MapContainer>
       </div>
       {selectedTrack && (
-        <div className="flex h-[220px] shrink-0 gap-0 border-t border-slate-700 bg-slate-900/98 overflow-hidden">
+        <div className="flex h-[320px] shrink-0 gap-0 border-t border-slate-700 bg-slate-900/98 overflow-hidden">
           <div className="w-[280px] shrink-0 border-r border-slate-700 p-2 flex flex-col min-h-0">
             {selectedProfile ? (
               <TrackDetailsPanel
@@ -464,10 +485,11 @@ export function MapView({
           </div>
           <div className="min-w-0 flex-1 p-2 flex flex-col">
             {selectedProfile ? (
-              <TrackElevationProfile
+              <TrackProfilePanel
                 trackName={selectedProfile.trackName}
                 profilePoints={selectedProfile.profilePoints}
                 trackPoints={selectedTrackPoints}
+                hoveredIndex={hoveredIndex}
                 onHoverIndex={onHoverIndex}
               />
             ) : (
