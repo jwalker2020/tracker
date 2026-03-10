@@ -59,13 +59,6 @@ export async function POST(request: Request) {
   }
 
   const demBasePath = process.env.DEM_BASE_PATH?.trim();
-  if (!demBasePath) {
-    return NextResponse.json({
-      ok: true,
-      skipped: true,
-      warning: "Elevation enrichment skipped. Set DEM_BASE_PATH to enable DEM elevation.",
-    });
-  }
 
   if (startAsync) {
     let checkpoint: Awaited<ReturnType<typeof getResumableCheckpoint>> = null;
@@ -183,7 +176,7 @@ export async function POST(request: Request) {
   let result: Awaited<ReturnType<typeof enrichGpxWithDemPerTrack>>;
   try {
     result = await enrichGpxWithDemPerTrack(gpxText, {
-      demBasePath,
+      demBasePath: demBasePath || undefined,
       manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
     });
   } catch (err) {

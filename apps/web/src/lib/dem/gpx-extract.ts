@@ -32,6 +32,19 @@ function parseFloatAttr(el: Element, name: string): number {
   return v ? parseFloat(v) : NaN;
 }
 
+/** First child element with local name matching (handles GPX 1.1 default namespace). */
+function getFirstChildByLocalName(parent: Element, localName: string): Element | null {
+  const name = localName.toLowerCase();
+  for (let i = 0; i < parent.childNodes.length; i++) {
+    const n = parent.childNodes[i];
+    if (n?.nodeType === 1) {
+      const el = n as Element;
+      if ((el.localName || el.nodeName).toLowerCase() === name) return el;
+    }
+  }
+  return null;
+}
+
 /** True if value is a finite number suitable for WGS84. */
 function isFiniteCoord(n: number): boolean {
   return typeof n === "number" && Number.isFinite(n) && Math.abs(n) <= 90;
@@ -141,7 +154,7 @@ export function extractTracks(gpxText: string): ExtractedTrack[] {
   for (let i = 0; i < trks.length; i++) {
     const trk = trks.item(i);
     if (!trk) continue;
-    const nameEl = trk.getElementsByTagName("name").item(0);
+    const nameEl = trk.getElementsByTagName("name").item(0) ?? getFirstChildByLocalName(trk, "name");
     const name = (nameEl?.textContent ?? "").trim() || `Track ${trackIndex + 1}`;
     const trkpts = trk.getElementsByTagName("trkpt");
     const points: GpxTrackPoint[] = [];
@@ -151,8 +164,8 @@ export function extractTracks(gpxText: string): ExtractedTrack[] {
       const lat = parseFloatAttr(pt, "lat");
       const lon = parseFloatAttr(pt, "lon");
       if (!isFiniteCoord(lat) || !isFiniteLng(lon)) continue;
-      const eleEl = pt.getElementsByTagName("ele").item(0);
-      const ele = eleEl ? parseFloat(eleEl.textContent ?? "") : NaN;
+      const eleEl = pt.getElementsByTagName("ele").item(0) ?? getFirstChildByLocalName(pt, "ele");
+      const ele = eleEl ? parseFloat((eleEl.textContent ?? "").trim()) : NaN;
       const hasEle = Number.isFinite(ele);
       points.push(hasEle ? [lat, lon, ele] : [lat, lon]);
     }
@@ -166,7 +179,7 @@ export function extractTracks(gpxText: string): ExtractedTrack[] {
   for (let i = 0; i < rtes.length; i++) {
     const rte = rtes.item(i);
     if (!rte) continue;
-    const nameEl = rte.getElementsByTagName("name").item(0);
+    const nameEl = rte.getElementsByTagName("name").item(0) ?? getFirstChildByLocalName(rte, "name");
     const name = (nameEl?.textContent ?? "").trim() || `Route ${trackIndex + 1}`;
     const rtepts = rte.getElementsByTagName("rtept");
     const points: GpxTrackPoint[] = [];
@@ -176,8 +189,8 @@ export function extractTracks(gpxText: string): ExtractedTrack[] {
       const lat = parseFloatAttr(pt, "lat");
       const lon = parseFloatAttr(pt, "lon");
       if (!isFiniteCoord(lat) || !isFiniteLng(lon)) continue;
-      const eleEl = pt.getElementsByTagName("ele").item(0);
-      const ele = eleEl ? parseFloat(eleEl.textContent ?? "") : NaN;
+      const eleEl = pt.getElementsByTagName("ele").item(0) ?? getFirstChildByLocalName(pt, "ele");
+      const ele = eleEl ? parseFloat((eleEl.textContent ?? "").trim()) : NaN;
       const hasEle = Number.isFinite(ele);
       points.push(hasEle ? [lat, lon, ele] : [lat, lon]);
     }

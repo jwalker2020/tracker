@@ -68,8 +68,8 @@ export type EnrichmentCheckpointPayload = {
 };
 
 export type DemEnrichmentConfig = {
-  /** Path to folder containing DEM tiles (and manifest). */
-  demBasePath: string;
+  /** Path to folder containing DEM tiles (and manifest). Omit or empty = use only GPX elevation (no DEM). */
+  demBasePath?: string;
   /** Optional path to manifest (default manifest.json). */
   manifestPath?: string;
   /** Optional progress callback during sampling (processedPoints, totalPoints, percentComplete). */
@@ -216,6 +216,77 @@ function cumulativeDistancesAlongLine(points: PointWithOptionalEle[]): number[] 
     out[i] = out[i - 1]! + add;
   }
   return out;
+}
+
+/**
+ * Enrich a single track using only GPX geometry and elevation (no DEM).
+ * Uses cumulative distance along raw points; handles duplicate consecutive points (zero-length segments).
+ * Elevation from GPX when present; missing elevation stays null (stats still computed from valid points).
+ */
+function enrichSingleTrackGpxOnly(
+  points: PointWithOptionalEle[],
+  _bounds: { south: number; west: number; north: number; east: number }
+): ElevationEnrichmentResult {
+  if (points.length === 0) return { ...EMPTY_RESULT };
+
+  const cumulativeDistM = cumulativeDistancesAlongLine(points);
+  const safeDistanceM =
+    cumulativeDistM.length > 0 && Number.isFinite(cumulativeDistM[cumulativeDistM.length - 1]!)
+      ? Math.max(0, cumulativeDistM[cumulativeDistM.length - 1]!)
+      : 0;
+
+  const elevations: (number | null)[] = points.map((p) =>
+    hasGpxElevation(p) ? (p[2] as number) : null
+  );
+  const validCount = elevations.filter((e) => e != null && Number.isFinite(e)).length;
+
+  const profileSoFar: ElevationProfilePoint[] = points.map((p, i) => ({
+    d: Math.round((cumulativeDistM[i] ?? 0) * 10) / 10,
+    e: elevations[i] != null && Number.isFinite(elevations[i]) ? Math.round(elevations[i]! * 10) / 10 : 0,
+    lat: p[0],
+    lng: p[1],
+  }));
+
+  const rawElevations = profileSoFar.map((p) => p.e);
+  const smoothedElevations =
+    rawElevations.length > 0
+      ? smoothElevationSeriesMedian(rawElevations, ELEVATION_SMOOTH_WINDOW_SIZE)
+      : [];
+  const statsFromSmoothed =
+    smoothedElevations.length > 0
+      ? computeElevationStatsWithDistance(smoothedElevations, safeDistanceM, {
+          ascentDescentThresholdM: ELEVATION_CHANGE_THRESHOLD_M,
+        })
+      : null;
+
+  const stats: ElevationStats = statsFromSmoothed
+    ? {
+        ...statsFromSmoothed,
+        totalCount: points.length,
+        validCount,
+      }
+    : {
+        minElevationM: 0,
+        maxElevationM: 0,
+        totalAscentM: 0,
+        totalDescentM: 0,
+        averageGradePct: 0,
+        averageSteepnessPct: 0,
+        validCount: 0,
+        totalCount: points.length,
+      };
+
+  const profileForReturn: ElevationProfilePoint[] =
+    smoothedElevations.length > 0 && smoothedElevations.length === profileSoFar.length
+      ? profileSoFar.map((p, i) => ({ ...p, e: smoothedElevations[i]! }))
+      : profileSoFar;
+
+  return {
+    stats,
+    distanceM: safeDistanceM,
+    elevations: [],
+    profile: profileForReturn.length > 0 ? profileForReturn : undefined,
+  };
 }
 
 /** Return the first open tile whose bbox contains (lng, lat), or null. */
@@ -883,6 +954,7 @@ export type PerTrackEnrichmentResult = {
 /**
  * Enrich each track in the GPX separately and return per-track results plus file-level aggregates.
  * Progress reports overall points processed across all tracks.
+ * When demBasePath is omitted or empty, uses only GPX elevation (no DEM); tracks with lat/lon/ele enrich successfully.
  */
 export async function enrichGpxWithDemPerTrack(
   gpxText: string,
@@ -896,8 +968,42 @@ export async function enrichGpxWithDemPerTrack(
     };
   }
 
+  const useGpxOnly = !config.demBasePath?.trim();
+  if (useGpxOnly) {
+    const gpxEleCount = tracks.flatMap((t) => t.points).filter(hasGpxElevation).length;
+    const totalPts = tracks.reduce((s, t) => s + t.points.length, 0);
+    try {
+      process.stderr.write(
+        `[DEM] GPX-only enrichment: ${gpxEleCount}/${totalPts} points have elevation from GPX; no DEM.\n`
+      );
+    } catch {
+      console.warn("[DEM] GPX-only enrichment:", gpxEleCount, "/", totalPts, "points have GPX elevation; no DEM.");
+    }
+    let totalPoints = 0;
+    for (const t of tracks) totalPoints += t.points.length;
+    if (config.onProgress) {
+      config.onProgress({ processedPoints: 0, totalPoints, percentComplete: 0 });
+    }
+    let completedPoints = 0;
+    const enrichedTracks: EnrichedTrackSummary[] = [];
+    for (let i = 0; i < tracks.length; i++) {
+      const c = config.isCancelled?.();
+      const cancelled = typeof c?.then === "function" ? await c : c;
+      if (cancelled) throw new Error("ENRICHMENT_CANCELLED");
+      const track = tracks[i]!;
+      const result = enrichSingleTrackGpxOnly(track.points, track.bounds);
+      enrichedTracks.push(toEnrichedTrackSummary(track, result));
+      completedPoints += track.points.length;
+      if (config.onProgress) {
+        const pct = totalPoints > 0 ? Math.min(100, Math.round((completedPoints / totalPoints) * 100)) : 0;
+        config.onProgress({ processedPoints: completedPoints, totalPoints, percentComplete: pct });
+      }
+    }
+    return { enrichedTracks, aggregates: computeAggregates(enrichedTracks) };
+  }
+
   const index = await loadTileIndex({
-    demBasePath: config.demBasePath,
+    demBasePath: config.demBasePath!,
     manifestPath: config.manifestPath,
   });
 

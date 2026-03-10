@@ -122,10 +122,6 @@ export async function runEnrichmentInBackground(
       overallPercentComplete: 0,
     });
 
-    if (!demBasePath) {
-      await writeProgress({ status: "failed", error: "DEM_BASE_PATH is not set." });
-      return;
-    }
     if (!baseUrl) {
       await writeProgress({ status: "failed", error: "NEXT_PUBLIC_PB_URL is not set." });
       return;
@@ -166,7 +162,7 @@ export async function runEnrichmentInBackground(
     let result: Awaited<ReturnType<typeof enrichGpxWithDemPerTrack>>;
     try {
       result = await enrichGpxWithDemPerTrack(gpxText, {
-        demBasePath,
+        demBasePath: demBasePath || undefined,
         manifestPath: process.env.DEM_MANIFEST_PATH?.trim() || undefined,
         isCancelled,
         onProgress: async ({ processedPoints, totalPoints, percentComplete }) => {
