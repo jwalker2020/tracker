@@ -73,6 +73,8 @@ export type EnrichedTrackSummary = {
   totalDescentM: number;
   averageGradePct: number;
   averageSteepnessPct: number;
+  /** Maximum grade (percent) along the track from smoothed segment grades (uphill or downhill, by magnitude). */
+  maximumGradePct: number;
   /** Average curviness: cumulative absolute direction change (degrees) per mile. 0 = straight; higher = more winding. */
   averageCurvinessDegPerMile: number;
   validCount: number;

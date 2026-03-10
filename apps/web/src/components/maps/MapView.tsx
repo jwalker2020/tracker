@@ -483,7 +483,7 @@ export function MapView({
               </div>
             )}
           </div>
-          <div className="min-w-0 flex-1 p-2 flex flex-col">
+          <div className="min-w-0 flex-1 p-2 flex flex-col min-h-0 overflow-y-auto">
             {selectedProfile ? (
               <TrackProfilePanel
                 trackName={selectedProfile.trackName}

@@ -4,7 +4,8 @@ import { useMemo } from "react";
 import type { ProfilePoint } from "./TrackElevationProfile";
 import { TrackElevationProfile } from "./TrackElevationProfile";
 import { TrackCurvinessProfile } from "./TrackCurvinessProfile";
-import { computeCurvinessProfile } from "./track-profile-utils";
+import { TrackGradeProfile } from "./TrackGradeProfile";
+import { computeCurvinessProfile, computeGradeProfile } from "./track-profile-utils";
 
 export type TrackProfilePanelProps = {
   trackName: string;
@@ -31,6 +32,10 @@ export function TrackProfilePanel({
     () => computeCurvinessProfile(profilePoints, trackPoints),
     [profilePoints, trackPoints]
   );
+  const gradeData = useMemo(
+    () => computeGradeProfile(profilePoints),
+    [profilePoints]
+  );
 
   const distanceRange = useMemo(() => {
     if (!profilePoints || profilePoints.length < 2) return null;
@@ -40,7 +45,7 @@ export function TrackProfilePanel({
   }, [profilePoints]);
 
   return (
-    <div className="flex h-full flex-col gap-2 min-h-0">
+    <div className="flex min-h-[420px] flex-col gap-2">
       <div className="min-h-0 flex-1 flex flex-col min-h-[140px]">
         <TrackElevationProfile
           trackName={trackName}
@@ -56,6 +61,17 @@ export function TrackProfilePanel({
           trackName={trackName}
           profilePoints={profilePoints}
           curvinessData={curvinessData}
+          trackPoints={trackPoints}
+          distanceRange={distanceRange}
+          hoveredIndex={hoveredIndex}
+          onHoverIndex={onHoverIndex}
+        />
+      </div>
+      <div className="shrink-0">
+        <TrackGradeProfile
+          trackName={trackName}
+          profilePoints={profilePoints}
+          gradeData={gradeData}
           trackPoints={trackPoints}
           distanceRange={distanceRange}
           hoveredIndex={hoveredIndex}

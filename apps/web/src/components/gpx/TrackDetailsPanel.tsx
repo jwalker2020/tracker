@@ -59,6 +59,17 @@ export function TrackDetailsPanel({ trackName, track }: TrackDetailsPanelProps) 
           </div>
           <div className="flex justify-between gap-2">
             <dt className="flex items-center gap-0 text-slate-400">
+              Max Grade
+              <InfoTooltip text="The steepest segment along the track (percent grade), uphill or downhill." />
+            </dt>
+            <dd className="text-slate-200 tabular-nums">
+              {typeof track.maximumGradePct === "number" && Number.isFinite(track.maximumGradePct)
+                ? `${track.maximumGradePct.toFixed(2)}%`
+                : "—"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt className="flex items-center gap-0 text-slate-400">
               Avg Curviness
               <InfoTooltip text="The average twistiness of the track." />
             </dt>

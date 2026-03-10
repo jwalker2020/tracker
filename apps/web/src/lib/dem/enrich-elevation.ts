@@ -718,6 +718,37 @@ function computeCurvinessDegPerMile(
   return Number.isFinite(degPerMile) ? Math.max(0, degPerMile) : 0;
 }
 
+/** Minimum segment length (m) for grade; shorter segments are skipped to avoid noise. */
+const GRADE_MIN_SEGMENT_M = 1;
+
+/**
+ * Compute maximum grade (percent) from a smoothed elevation profile.
+ * Uses same noise reduction as average grade: segments shorter than GRADE_MIN_SEGMENT_M
+ * or with elevation change smaller than ELEVATION_CHANGE_THRESHOLD_M are ignored.
+ * Returns the maximum segment grade by magnitude (uphill or downhill).
+ */
+function computeMaximumGradePct(profile: Array<{ d: number; e: number }>): number {
+  if (!profile || profile.length < 2) return 0;
+  let maxGradePct = 0;
+  for (let i = 1; i < profile.length; i++) {
+    const prev = profile[i - 1]!;
+    const curr = profile[i]!;
+    const distM = curr.d - prev.d;
+    const elevM = curr.e - prev.e;
+    const absElevM = Math.abs(elevM);
+    if (
+      !Number.isFinite(distM) ||
+      !Number.isFinite(elevM) ||
+      distM < GRADE_MIN_SEGMENT_M ||
+      absElevM < ELEVATION_CHANGE_THRESHOLD_M
+    )
+      continue;
+    const gradePct = Math.abs((elevM / distM) * 100);
+    if (Number.isFinite(gradePct) && gradePct > maxGradePct) maxGradePct = gradePct;
+  }
+  return maxGradePct;
+}
+
 function toEnrichedTrackSummary(
   track: import("./gpx-extract").ExtractedTrack,
   result: ElevationEnrichmentResult
@@ -743,6 +774,13 @@ function toEnrichedTrackSummary(
     result.distanceM
   );
 
+  const maximumGradePct =
+    result.profile && result.profile.length >= 2
+      ? computeMaximumGradePct(
+          result.profile.map((p) => ({ d: p.d, e: p.e }))
+        )
+      : 0;
+
   return {
     trackIndex: track.trackIndex,
     name: track.name,
@@ -757,6 +795,7 @@ function toEnrichedTrackSummary(
     totalDescentM: result.stats.totalDescentM,
     averageGradePct: result.stats.averageGradePct,
     averageSteepnessPct: result.stats.averageSteepnessPct,
+    maximumGradePct,
     averageCurvinessDegPerMile,
     validCount: result.stats.validCount,
     elevationProfileJson: profileForStorage ? JSON.stringify(profileForStorage) : null,

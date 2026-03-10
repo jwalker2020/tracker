@@ -94,6 +94,8 @@ export type EnrichedTrackSummaryForDisplay = {
   totalDescentFt: number;
   averageGradePct: number;
   averageSteepnessPct: number;
+  /** Maximum grade (percent) along the track, uphill or downhill by magnitude. */
+  maximumGradePct: number;
   /** Average curviness in degrees per mile (0 = straight; higher = more winding). */
   averageCurvinessDegPerMile: number;
   validCount: number;
@@ -156,6 +158,7 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
         totalDescentM: number;
         averageGradePct: number;
         averageSteepnessPct?: number;
+        maximumGradePct?: number;
         averageCurvinessDegPerMile?: number;
         validCount: number;
         elevationProfileJson: string | null;
@@ -175,6 +178,10 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
           totalDescentFt: metersToFeet(t.totalDescentM),
           averageGradePct: t.averageGradePct,
           averageSteepnessPct: typeof t.averageSteepnessPct === "number" ? t.averageSteepnessPct : 0,
+          maximumGradePct:
+            typeof t.maximumGradePct === "number" && Number.isFinite(t.maximumGradePct)
+              ? t.maximumGradePct
+              : 0,
           averageCurvinessDegPerMile:
             typeof t.averageCurvinessDegPerMile === "number" && Number.isFinite(t.averageCurvinessDegPerMile)
               ? t.averageCurvinessDegPerMile

@@ -130,3 +130,36 @@ export function computeCurvinessProfile(
   }
   return result;
 }
+
+/** Feet per mile for grade: rise (ft) / run (mi) → grade% = rise / (run * FT_PER_MI) * 100 */
+const FT_PER_MI = 5280;
+
+/**
+ * Compute per-point grade (percent) from elevation profile.
+ * profilePoints use d in miles, e in feet. Segment grade = (e[i]-e[i-1]) / ((d[i]-d[i-1]) * 5280) * 100.
+ * Same index space as profilePoints; first point gets 0.
+ */
+export function computeGradeProfile(
+  profilePoints: ProfilePoint[] | null
+): { d: number; g: number }[] | null {
+  if (!profilePoints || profilePoints.length < 2) return null;
+  const result: { d: number; g: number }[] = [{ d: profilePoints[0]!.d, g: 0 }];
+  for (let i = 1; i < profilePoints.length; i++) {
+    const prev = profilePoints[i - 1]!;
+    const curr = profilePoints[i]!;
+    const d = curr.d;
+    const deltaD = curr.d - prev.d;
+    const deltaE = curr.e - prev.e;
+    if (!Number.isFinite(deltaD) || !Number.isFinite(deltaE) || deltaD <= 0) {
+      result.push({ d, g: 0 });
+      continue;
+    }
+    const runFt = deltaD * FT_PER_MI;
+    const gradePct = runFt !== 0 ? (deltaE / runFt) * 100 : 0;
+    result.push({
+      d,
+      g: Number.isFinite(gradePct) ? gradePct : 0,
+    });
+  }
+  return result;
+}

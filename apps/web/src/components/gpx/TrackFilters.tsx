@@ -5,6 +5,8 @@ import { RangeFilter } from "@/components/ui/range-filter";
 export type TrackFilterState = {
   gradeMin: number;
   gradeMax: number;
+  maximumGradeMin: number;
+  maximumGradeMax: number;
   curvinessMin: number;
   curvinessMax: number;
 };
@@ -16,6 +18,7 @@ export type TrackFiltersProps = {
   onFilterChange: (patch: Partial<TrackFilterState>) => void;
   /** Slider extents = selected-data min/max (from selected GPX files). */
   gradeBounds: { dataMin: number; dataMax: number };
+  maximumGradeBounds: { dataMin: number; dataMax: number };
   curvinessBounds: { dataMin: number; dataMax: number };
   totalTracks: number;
   visibleCount: number;
@@ -27,6 +30,7 @@ export function TrackFilters({
   filterState,
   onFilterChange,
   gradeBounds,
+  maximumGradeBounds,
   curvinessBounds,
   totalTracks,
   visibleCount,
@@ -44,6 +48,17 @@ export function TrackFilters({
           valueMax={Math.max(gradeBounds.dataMin, Math.min(gradeBounds.dataMax, filterState.gradeMax))}
           onMinChange={(v) => onFilterChange({ gradeMin: v })}
           onMaxChange={(v) => onFilterChange({ gradeMax: v })}
+          step={0.5}
+          unit="%"
+        />
+        <RangeFilter
+          label="Maximum grade"
+          dataMin={maximumGradeBounds.dataMin}
+          dataMax={maximumGradeBounds.dataMax}
+          valueMin={Math.max(maximumGradeBounds.dataMin, Math.min(maximumGradeBounds.dataMax, filterState.maximumGradeMin))}
+          valueMax={Math.max(maximumGradeBounds.dataMin, Math.min(maximumGradeBounds.dataMax, filterState.maximumGradeMax))}
+          onMinChange={(v) => onFilterChange({ maximumGradeMin: v })}
+          onMaxChange={(v) => onFilterChange({ maximumGradeMax: v })}
           step={0.5}
           unit="%"
         />
