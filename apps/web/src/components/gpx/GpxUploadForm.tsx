@@ -1,7 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { enrichGpx, boundsToJson, gpxUploadSchema, isGpxFileName } from "@/lib/gpx";
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  enrichGpx,
+  boundsToJson,
+  gpxUploadSchema,
+  isGpxFileName,
+  inspectGpxTrackCount,
+  splitSingleTrackGpxByPointCount,
+} from "@/lib/gpx";
 
 const DEFAULT_COLORS = [
   "#3b82f6", "#22c55e", "#eab308", "#ef4444", "#8b5cf6",
@@ -10,6 +17,8 @@ const DEFAULT_COLORS = [
 const UPLOAD_TIMEOUT_MS = 30_000;
 const SUCCESS_MESSAGE_DURATION_MS = 2_000;
 const ENRICHMENT_JOB_KEY = "gpx_enrichment_job_id";
+const DEFAULT_SPLIT_COUNT = 10;
+const MIN_SPLIT_COUNT = 2;
 
 type GpxUploadFormProps = {
   onUploadSuccess: () => void;
@@ -62,7 +71,16 @@ export function GpxUploadForm({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
+  const [splitDialogOpen, setSplitDialogOpen] = useState<"ask" | "count" | null>(null);
+  const [pendingUpload, setPendingUpload] = useState<{
+    file: File;
+    gpxText: string;
+    pointCount: number;
+  } | null>(null);
+  const [splitCountInput, setSplitCountInput] = useState(DEFAULT_SPLIT_COUNT);
+  const [splitCountError, setSplitCountError] = useState<string | null>(null);
   const lastEnrichedRecordIdRef = useRef<string | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
 
   useEffect(() => {
     const stored = sessionStorage.getItem(ENRICHMENT_JOB_KEY);
@@ -135,6 +153,69 @@ export function GpxUploadForm({
     };
   }, [enrichmentJobId, onEnrichmentComplete, onUploadSuccess]);
 
+  const doUpload = useCallback(
+    async (file: File, gpxText: string, form: HTMLFormElement) => {
+      const enriched = enrichGpx(gpxText);
+      if (enriched.pointCount === 0) {
+        setError("No track or route points found in the GPX file.");
+        return;
+      }
+      const displayName = name.trim() || file.name.replace(/\.gpx$/i, "");
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("name", displayName);
+      formData.append("boundsJson", boundsToJson(enriched.bounds));
+      formData.append("centerLat", String(enriched.centerLat));
+      formData.append("centerLng", String(enriched.centerLng));
+      formData.append("trackCount", String(enriched.trackCount));
+      formData.append("pointCount", String(enriched.pointCount));
+      formData.append("color", color);
+      formData.append("distanceM", String(enriched.distanceM));
+      formData.append("minElevationM", String(enriched.minElevationM));
+      formData.append("maxElevationM", String(enriched.maxElevationM));
+      formData.append("totalAscentM", String(enriched.totalAscentM));
+      formData.append("totalDescentM", String(enriched.totalDescentM));
+      formData.append("averageGradePct", String(enriched.averageGradePct));
+      formData.append("enrichedGeoJson", enriched.enrichedGeoJson);
+
+      const uploadRes = await withTimeout(
+        fetch("/api/gpx/upload", { method: "POST", body: formData, credentials: "include" }),
+        UPLOAD_TIMEOUT_MS
+      );
+      if (!uploadRes.ok) {
+        const errData = await uploadRes.json().catch(() => ({}));
+        throw new Error((errData as { error?: string }).error ?? "Upload failed.");
+      }
+      const { id } = (await uploadRes.json()) as { id: string };
+      form.reset();
+      setName("");
+      setColor(DEFAULT_COLORS[0]);
+      setSuccess(true);
+      onUploadSuccess();
+
+      try {
+        const res = await fetch("/api/gpx/enrich", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, async: true }),
+          credentials: "include",
+        });
+        const data = (await res.json()) as { ok?: boolean; skipped?: boolean; warning?: string; error?: string; jobId?: string };
+        if (data.skipped && data.warning) setWarning(data.warning);
+        if (data.jobId) {
+          sessionStorage.setItem(ENRICHMENT_JOB_KEY, data.jobId);
+          setEnrichmentJobId(data.jobId);
+          lastEnrichedRecordIdRef.current = id;
+          onEnrichmentStarted?.(id, data.jobId);
+        }
+        if (data.ok === false || (!data.jobId && data.warning && !data.skipped)) setWarning(data.warning ?? "Enrichment could not be started.");
+      } catch {
+        setWarning("Elevation enrichment could not be started.");
+      }
+    },
+    [name, color, onUploadSuccess, onEnrichmentStarted]
+  );
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = e.currentTarget;
@@ -164,137 +245,207 @@ export function GpxUploadForm({
       return;
     }
 
-    setUploading(true);
+    let gpxText: string;
     try {
-      const gpxText = await file.text();
-      const enriched = enrichGpx(gpxText);
-      if (enriched.pointCount === 0) {
-        setError("No track or route points found in the GPX file.");
-        setUploading(false);
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("name", parsed.data.name ?? file.name.replace(/\.gpx$/i, ""));
-      formData.append("boundsJson", boundsToJson(enriched.bounds));
-      formData.append("centerLat", String(enriched.centerLat));
-      formData.append("centerLng", String(enriched.centerLng));
-      formData.append("trackCount", String(enriched.trackCount));
-      formData.append("pointCount", String(enriched.pointCount));
-      formData.append("color", parsed.data.color);
-      formData.append("distanceM", String(enriched.distanceM));
-      formData.append("minElevationM", String(enriched.minElevationM));
-      formData.append("maxElevationM", String(enriched.maxElevationM));
-      formData.append("totalAscentM", String(enriched.totalAscentM));
-      formData.append("totalDescentM", String(enriched.totalDescentM));
-      formData.append("averageGradePct", String(enriched.averageGradePct));
-      formData.append("enrichedGeoJson", enriched.enrichedGeoJson);
-
-      const uploadRes = await withTimeout(
-        fetch("/api/gpx/upload", { method: "POST", body: formData, credentials: "include" }),
-        UPLOAD_TIMEOUT_MS
-      );
-      if (!uploadRes.ok) {
-        const errData = await uploadRes.json().catch(() => ({}));
-        throw new Error((errData as { error?: string }).error ?? "Upload failed.");
-      }
-      const { id } = (await uploadRes.json()) as { id: string };
-      const record = { id };
-      form.reset();
-      setName("");
-      setColor(DEFAULT_COLORS[0]);
-      setSuccess(true);
-      onUploadSuccess();
-
-      try {
-        const res = await fetch("/api/gpx/enrich", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: record.id, async: true }),
-          credentials: "include",
-        });
-        const data = (await res.json()) as { ok?: boolean; skipped?: boolean; warning?: string; error?: string; jobId?: string };
-        if (data.skipped && data.warning) setWarning(data.warning);
-        if (data.jobId) {
-          sessionStorage.setItem(ENRICHMENT_JOB_KEY, data.jobId);
-          setEnrichmentJobId(data.jobId);
-          lastEnrichedRecordIdRef.current = record.id;
-          onEnrichmentStarted?.(record.id, data.jobId);
-        }
-        if (data.ok === false || (!data.jobId && data.warning && !data.skipped)) setWarning(data.warning ?? "Enrichment could not be started.");
-      } catch {
-        setWarning("Elevation enrichment could not be started.");
-      }
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setUploading(false);
+      gpxText = await file.text();
+    } catch {
+      setError("Could not read the file.");
+      return;
     }
+
+    const inspect = inspectGpxTrackCount(gpxText);
+    if (!inspect) {
+      setError("No track or route points found in the GPX file.");
+      return;
+    }
+
+    if (inspect.trackCount !== 1) {
+      setUploading(true);
+      try {
+        await doUpload(file, gpxText, form);
+      } catch (err) {
+        setError(getErrorMessage(err));
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
+
+    formRef.current = form;
+    setPendingUpload({ file, gpxText, pointCount: inspect.pointCount });
+    setSplitDialogOpen("ask");
   }
 
+  function handleSplitNo() {
+    if (!pendingUpload || !formRef.current) return;
+    const { file, gpxText } = pendingUpload;
+    setSplitDialogOpen(null);
+    setPendingUpload(null);
+    const form = formRef.current;
+    formRef.current = null;
+    setUploading(true);
+    doUpload(file, gpxText, form).catch((err) => setError(getErrorMessage(err))).finally(() => setUploading(false));
+  }
+
+  function handleSplitYes() {
+    setSplitDialogOpen("count");
+    setSplitCountInput(
+      pendingUpload ? Math.min(DEFAULT_SPLIT_COUNT, Math.max(MIN_SPLIT_COUNT, pendingUpload.pointCount)) : DEFAULT_SPLIT_COUNT
+    );
+    setSplitCountError(null);
+  }
+
+  function handleSplitCancel() {
+    setSplitDialogOpen("ask");
+    setSplitCountError(null);
+  }
+
+  function handleSplitConfirm() {
+    if (!pendingUpload || !formRef.current) return;
+    const { file, gpxText, pointCount } = pendingUpload;
+    const maxSplit = pointCount;
+    const n = Math.floor(Number(splitCountInput));
+    if (!Number.isFinite(n) || n < MIN_SPLIT_COUNT) {
+      setSplitCountError(`Enter at least ${MIN_SPLIT_COUNT}.`);
+      return;
+    }
+    if (n > maxSplit) {
+      setSplitCountError(`Enter at most ${maxSplit} (number of points in the track).`);
+      return;
+    }
+    setSplitCountError(null);
+    const newGpxText = splitSingleTrackGpxByPointCount(gpxText, n);
+    const newFile = new File([newGpxText], file.name, { type: "application/gpx+xml" });
+    const form = formRef.current;
+    setSplitDialogOpen(null);
+    setPendingUpload(null);
+    formRef.current = null;
+    setUploading(true);
+    doUpload(newFile, newGpxText, form).catch((err) => setError(getErrorMessage(err))).finally(() => setUploading(false));
+  }
+
+  const buttonBase = "rounded px-3 py-2 text-sm font-medium border border-slate-600 bg-slate-700 text-slate-200 hover:bg-slate-600";
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
-      <div>
-        <label htmlFor="gpx-file" className="mb-1 block text-xs font-medium text-slate-300">
-          GPX file
-        </label>
-        <input
-          id="gpx-file"
-          type="file"
-          accept=".gpx"
-          required
-          className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-slate-200 file:mr-2 file:rounded file:border-0 file:bg-sky-600 file:px-2 file:py-1 file:text-slate-100"
-        />
-      </div>
-      <div>
-        <label htmlFor="gpx-name" className="mb-1 block text-xs font-medium text-slate-300">
-          Name (optional)
-        </label>
-        <input
-          id="gpx-name"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="My track"
-          className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500"
-        />
-      </div>
-      <div>
-        <label htmlFor="gpx-color" className="mb-1 block text-xs font-medium text-slate-300">
-          Color
-        </label>
-        <div className="flex flex-wrap gap-2">
-          {DEFAULT_COLORS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setColor(c)}
-              className={`h-6 w-6 rounded-full border-2 ${color === c ? "border-slate-100 border-slate-400" : "border-slate-600"}`}
-              style={{ backgroundColor: c }}
-              aria-label={`Color ${c}`}
-            />
-          ))}
+    <>
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <div>
+          <label htmlFor="gpx-file" className="mb-1 block text-xs font-medium text-slate-300">
+            GPX file
+          </label>
+          <input
+            id="gpx-file"
+            type="file"
+            accept=".gpx"
+            required
+            className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-slate-200 file:mr-2 file:rounded file:border-0 file:bg-sky-600 file:px-2 file:py-1 file:text-slate-100"
+          />
         </div>
-      </div>
-      {error ? (
-        <p className="text-xs text-red-400" role="alert">{error}</p>
-      ) : null}
-      {success ? (
-        <p className="text-xs text-green-400" role="status">Uploaded!</p>
-      ) : null}
-      {warning ? (
-        <p className="text-xs text-amber-400" role="status" aria-live="polite">
-          {warning}
-        </p>
-      ) : null}
-      <button
-        type="submit"
-        disabled={uploading}
-        className="w-full rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
-      >
-        {uploading ? "Uploading…" : "Upload"}
-      </button>
-    </form>
+        <div>
+          <label htmlFor="gpx-name" className="mb-1 block text-xs font-medium text-slate-300">
+            Name (optional)
+          </label>
+          <input
+            id="gpx-name"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="My track"
+            className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-slate-200 placeholder:text-slate-500"
+          />
+        </div>
+        <div>
+          <label htmlFor="gpx-color" className="mb-1 block text-xs font-medium text-slate-300">
+            Color
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {DEFAULT_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setColor(c)}
+                className={`h-6 w-6 rounded-full border-2 ${color === c ? "border-slate-100 border-slate-400" : "border-slate-600"}`}
+                style={{ backgroundColor: c }}
+                aria-label={`Color ${c}`}
+              />
+            ))}
+          </div>
+        </div>
+        {error ? (
+          <p className="text-xs text-red-400" role="alert">{error}</p>
+        ) : null}
+        {success ? (
+          <p className="text-xs text-green-400" role="status">Uploaded!</p>
+        ) : null}
+        {warning ? (
+          <p className="text-xs text-amber-400" role="status" aria-live="polite">
+            {warning}
+          </p>
+        ) : null}
+        <button
+          type="submit"
+          disabled={uploading}
+          className="w-full rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+        >
+          {uploading ? "Uploading…" : "Upload"}
+        </button>
+      </form>
+
+      {splitDialogOpen === "ask" && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" role="dialog" aria-modal="true" aria-labelledby="split-dialog-title">
+          <div className="mx-4 w-full max-w-sm rounded-lg border border-slate-600 bg-slate-800 p-4 shadow-lg">
+            <p id="split-dialog-title" className="mb-4 text-sm text-slate-200">
+              I see there is one track in this GPX file. Would you like to split it into multiple tracks?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={handleSplitNo} className={buttonBase}>
+                No
+              </button>
+              <button type="button" onClick={handleSplitYes} className="rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500">
+                Yes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {splitDialogOpen === "count" && pendingUpload && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" role="dialog" aria-modal="true" aria-labelledby="split-count-dialog-title">
+          <div className="mx-4 w-full max-w-sm rounded-lg border border-slate-600 bg-slate-800 p-4 shadow-lg">
+            <p id="split-count-dialog-title" className="mb-3 text-sm text-slate-200">
+              How many tracks would you like to split this into? I will break it into equal parts, based on points in the track.
+            </p>
+            <div className="mb-3">
+              <label htmlFor="split-count" className="mb-1 block text-xs font-medium text-slate-300">
+                Number of tracks
+              </label>
+              <input
+                id="split-count"
+                type="number"
+                min={MIN_SPLIT_COUNT}
+                max={pendingUpload.pointCount}
+                value={splitCountInput}
+                onChange={(e) => {
+                  setSplitCountInput(e.target.valueAsNumber);
+                  setSplitCountError(null);
+                }}
+                className="w-full rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-slate-200"
+              />
+              {splitCountError ? (
+                <p className="mt-1 text-xs text-red-400" role="alert">{splitCountError}</p>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={handleSplitCancel} className={buttonBase}>
+                Cancel
+              </button>
+              <button type="button" onClick={handleSplitConfirm} className="rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500">
+                Split
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
