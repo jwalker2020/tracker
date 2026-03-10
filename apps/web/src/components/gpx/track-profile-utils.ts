@@ -10,6 +10,8 @@ const M_PER_MI = 1609.344;
 const MIN_SEGMENT_M = 3;
 /** Min turning angle (deg) to count; tiny angle changes are ignored as noise. */
 const MIN_ANGLE_DEG = 2;
+/** Cap per-point curviness (deg/mi) to avoid GPS spike outliers; real sharp turns stay below this. */
+const MAX_CURVINESS_DEG_PER_MI = 5000;
 
 const SMOOTH_WINDOW = 5;
 
@@ -61,8 +63,8 @@ function bearingDeg(lat1: number, lon1: number, lat2: number, lon2: number): num
 
 /**
  * Compute per-point curviness (deg/mi) from profile points and track geometry.
- * GPS position noise can inflate turn-angle-based curviness; coordinates are lightly
- * smoothed (moving average) before computing bearings and turning angles.
+ * Lat/lon are lightly smoothed (moving average, window 5) before bearings/turn angles
+ * to reduce GPS jitter; map geometry is unchanged. Units: degrees per mile (0 = straight).
  * Uses same index space as elevation profile; each point gets a curviness value (0 at ends).
  */
 export function computeCurvinessProfile(
@@ -95,7 +97,8 @@ export function computeCurvinessProfile(
     while (turnDeg > 180) turnDeg -= 360;
     while (turnDeg < -180) turnDeg += 360;
     const absTurn = Math.abs(turnDeg);
-    let segLenM = 0;
+    let seg1M = 0;
+    let seg2M = 0;
     try {
       const seg1 = lineString([
         [a.lng, a.lat],
@@ -105,17 +108,24 @@ export function computeCurvinessProfile(
         [b.lng, b.lat],
         [c.lng, c.lat],
       ]);
-      segLenM =
-        (length(seg1, { units: "meters" }) + length(seg2, { units: "meters" })) / 2;
+      seg1M = length(seg1, { units: "meters" });
+      seg2M = length(seg2, { units: "meters" });
     } catch {
-      segLenM = 0;
+      seg1M = 0;
+      seg2M = 0;
     }
-    if (segLenM < MIN_SEGMENT_M || absTurn < MIN_ANGLE_DEG) {
+    const segLenM = (seg1M + seg2M) / 2;
+    const bothSegmentsLongEnough =
+      seg1M >= MIN_SEGMENT_M && seg2M >= MIN_SEGMENT_M;
+    if (!bothSegmentsLongEnough || absTurn < MIN_ANGLE_DEG) {
       result.push({ d, c: 0 });
     } else {
       const degPerMeter = absTurn / segLenM;
       const degPerMile = degPerMeter * M_PER_MI;
-      result.push({ d, c: Number.isFinite(degPerMile) ? Math.max(0, degPerMile) : 0 });
+      const c = Number.isFinite(degPerMile)
+        ? Math.min(MAX_CURVINESS_DEG_PER_MI, Math.max(0, degPerMile))
+        : 0;
+      result.push({ d, c });
     }
   }
   return result;

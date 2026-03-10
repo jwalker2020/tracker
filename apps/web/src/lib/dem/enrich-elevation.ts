@@ -600,13 +600,15 @@ const M_TO_MI = 1 / 1609.344;
 const CURVINESS_MIN_SEGMENT_M = 3;
 /** Minimum turning angle (degrees) to count; smaller turns are ignored to reduce noise. */
 const CURVINESS_MIN_ANGLE_DEG = 2;
+/** Cap each turn's contribution (deg) so a single GPS spike doesn't dominate track average. */
+const CURVINESS_MAX_TURN_DEG = 90;
 const M_PER_MI = 1609.344;
 const CURVINESS_SMOOTH_WINDOW = 5;
 
 /**
- * Light moving-average smoothing of lat/lon for curviness only.
- * GPS position noise can inflate turn-angle-based curviness; smoothing reduces jitter
- * while preserving real bends. Preserves endpoints by using only available points in the window.
+ * Light moving-average smoothing of lat/lon for curviness only (map geometry unchanged).
+ * Reduces GPS jitter before bearing/turn computation; window 5 preserves real bends.
+ * Preserves endpoints by using only available points in the window.
  */
 function smoothLatLonForCurviness(
   points: PointWithOptionalEle[],
@@ -708,7 +710,7 @@ function computeCurvinessDegPerMile(
     while (turnDeg < -180) turnDeg += 360;
     const absTurn = Math.abs(turnDeg);
     if (absTurn < CURVINESS_MIN_ANGLE_DEG) continue;
-    sumAbsTurnDeg += absTurn;
+    sumAbsTurnDeg += Math.min(absTurn, CURVINESS_MAX_TURN_DEG);
   }
 
   const degPerMeter = sumAbsTurnDeg / denomM;
