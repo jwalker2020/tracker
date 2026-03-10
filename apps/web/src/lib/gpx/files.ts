@@ -190,15 +190,25 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
           elevationProfileJson: (() => {
             if (!t.elevationProfileJson) return null;
             try {
-              const profile = JSON.parse(t.elevationProfileJson) as { d: number; e: number }[];
+              const profile = JSON.parse(t.elevationProfileJson) as Array<{
+                d: number;
+                e: number;
+                lat?: number;
+                lng?: number;
+              }>;
               if (!Array.isArray(profile) || profile.length === 0) return t.elevationProfileJson;
               const maxD = Math.max(...profile.map((p) => p.d));
               if (maxD > 20) {
                 return JSON.stringify(
-                  profile.map((p) => ({
-                    d: metersToFeet(p.d) / 5280,
-                    e: metersToFeet(p.e),
-                  }))
+                  profile.map((p) => {
+                    const lat = typeof p.lat === "number" && Number.isFinite(p.lat) ? p.lat : undefined;
+                    const lng = typeof p.lng === "number" && Number.isFinite(p.lng) ? p.lng : undefined;
+                    return {
+                      d: metersToFeet(p.d) / 5280,
+                      e: metersToFeet(p.e),
+                      ...(lat !== undefined && lng !== undefined && { lat, lng }),
+                    };
+                  })
                 );
               }
               return t.elevationProfileJson;

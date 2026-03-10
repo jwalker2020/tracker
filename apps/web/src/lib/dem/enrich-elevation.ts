@@ -190,6 +190,34 @@ type EnrichFromIndexOptions = {
 /** Point with optional elevation: [lat, lng] or [lat, lng, ele]. */
 type PointWithOptionalEle = [number, number, number?];
 
+/** True if point has valid GPX elevation (meters). */
+function hasGpxElevation(p: PointWithOptionalEle): boolean {
+  return p.length >= 3 && typeof p[2] === "number" && Number.isFinite(p[2]);
+}
+
+/**
+ * Cumulative distance (m) from start to each point along the line. Handles duplicate consecutive
+ * points (zero-length segments) safely. Result[i] = distance from point 0 to point i; result[0] = 0.
+ */
+function cumulativeDistancesAlongLine(points: PointWithOptionalEle[]): number[] {
+  const n = points.length;
+  const out: number[] = new Array(n);
+  if (n === 0) return out;
+  out[0] = 0;
+  for (let i = 1; i < n; i++) {
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    const seg = lineString([
+      [a[1], a[0]],
+      [b[1], b[0]],
+    ]);
+    const segLen = length(seg, { units: "meters" });
+    const add = Number.isFinite(segLen) && segLen >= 0 ? segLen : 0;
+    out[i] = out[i - 1]! + add;
+  }
+  return out;
+}
+
 /** Return the first open tile whose bbox contains (lng, lat), or null. */
 function findTileContainingPoint(
   openTiles: NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>[],
@@ -224,32 +252,38 @@ export async function enrichSingleTrackFromIndex(
   const line = lineString(points.map((p) => [p[1], p[0]]));
   const distanceM = length(line, { units: "meters" });
   const safeDistanceM = Number.isFinite(distanceM) && distanceM >= 0 ? distanceM : 0;
+  const anyGpxEle = points.some(hasGpxElevation);
   const bbox = boundsToWgs84Bbox(bounds);
   const tiles = findIntersectingTiles(index.tiles, bbox);
 
   if (tiles.length === 0) {
-    console.warn(
-      "[DEM] No tiles intersect GPX bbox [west,south,east,north]:",
-      bbox.map((n) => Number(n).toFixed(4)),
-      "| Index has",
-      index.tiles.length,
-      "tiles. Is the track inside your DEM coverage (e.g. New Hampshire)?"
-    );
-    const elevations: (number | null)[] = points.map(() => null);
-    const stats = computeElevationStatsWithDistance(elevations, safeDistanceM);
-    return { stats, distanceM: safeDistanceM, elevations, elevationHint: "no_intersecting_tiles" as const };
+    if (!anyGpxEle) {
+      console.warn(
+        "[DEM] No tiles intersect GPX bbox [west,south,east,north]:",
+        bbox.map((n) => Number(n).toFixed(4)),
+        "| Index has",
+        index.tiles.length,
+        "tiles. Is the track inside your DEM coverage (e.g. New Hampshire)?"
+      );
+      const elevations: (number | null)[] = points.map(() => null);
+      const stats = computeElevationStatsWithDistance(elevations, safeDistanceM);
+      return { stats, distanceM: safeDistanceM, elevations, elevationHint: "no_intersecting_tiles" as const };
+    }
   }
 
   const sampler = options?.sharedSampler ?? new DemRasterSampler(index.basePath);
   const openTiles: NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>[] = [];
-  const t0 = Date.now();
-  for (const meta of tiles) {
-    const open = await sampler.openTile(meta);
-    if (open != null) openTiles.push(open);
+  let tileOpenMs = 0;
+  if (tiles.length > 0) {
+    const t0 = Date.now();
+    for (const meta of tiles) {
+      const open = await sampler.openTile(meta);
+      if (open != null) openTiles.push(open);
+    }
+    tileOpenMs = Date.now() - t0;
   }
-  const tileOpenMs = Date.now() - t0;
 
-  if (openTiles.length === 0) {
+  if (openTiles.length === 0 && !anyGpxEle) {
     const pathMod = await import("node:path");
     const firstPath = tiles[0]?.path ?? "(no tile)";
     const resolvedFirst = pathMod.isAbsolute(firstPath)
@@ -271,19 +305,32 @@ export async function enrichSingleTrackFromIndex(
     return { stats, distanceM: safeDistanceM, elevations, elevationHint: "no_open_tiles" as const };
   }
 
-  const estimatedTotal = Math.max(
-    1,
-    safeDistanceM > 0 && points.length > 1
-      ? Math.ceil(safeDistanceM / RESAMPLE_SPACING_M) + 1
-      : points.length
-  );
+  /** When any point has valid GPX elevation, use raw points so we preserve it; no resampling. */
+  const useRawPoints = anyGpxEle;
+  if (anyGpxEle) {
+    const gpxEleCount = points.filter(hasGpxElevation).length;
+    try {
+      process.stderr.write(`[DEM] Using GPX elevation for ${gpxEleCount}/${points.length} points; DEM only for missing.\n`);
+    } catch {
+      console.warn("[DEM] Using GPX elevation for", gpxEleCount, "/", points.length, "points; DEM only for missing.");
+    }
+  }
+  const estimatedTotal = useRawPoints
+    ? points.length
+    : Math.max(
+        1,
+        safeDistanceM > 0 && points.length > 1
+          ? Math.ceil(safeDistanceM / RESAMPLE_SPACING_M) + 1
+          : points.length
+      );
   if (onProgress) {
     onProgress({ processedPoints: 0, totalPoints: estimatedTotal, percentComplete: 0 });
   }
 
-  /** Resampled [lat, lng][] or raw points with optional [lat, lng, ele]. */
-  const pointsToSample: PointWithOptionalEle[] =
-    safeDistanceM > 0 && points.length > 1
+  /** Points to sample: raw (with optional ele) when GPX has elevation, else resampled. */
+  const pointsToSample: PointWithOptionalEle[] = useRawPoints
+    ? points
+    : safeDistanceM > 0 && points.length > 1
       ? await resampleLineToFixedSpacing(line, safeDistanceM, RESAMPLE_SPACING_M, (processed, total) => {
           if (onProgress) {
             const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
@@ -293,7 +340,10 @@ export async function enrichSingleTrackFromIndex(
       : points;
 
   const totalPoints = pointsToSample.length;
-  const segmentLength = safeDistanceM / Math.max(1, totalPoints - 1);
+  const cumulativeDistM = useRawPoints ? cumulativeDistancesAlongLine(pointsToSample) : null;
+  const segmentLength = cumulativeDistM
+    ? 0
+    : safeDistanceM / Math.max(1, totalPoints - 1);
 
   let startIndex = 0;
   let accumulatedState: AccumulatedElevationState;
@@ -420,7 +470,10 @@ export async function enrichSingleTrackFromIndex(
         }
         chunkElevations[i - chunkStart] = value;
 
-        const cumDist = Math.round((i * segmentLength) * 10) / 10;
+        const cumDist =
+          cumulativeDistM != null
+            ? Math.round((cumulativeDistM[i] ?? 0) * 10) / 10
+            : Math.round((i * segmentLength) * 10) / 10;
         const e = value != null ? Math.round(value * 10) / 10 : 0;
         profileSoFar.push({ d: cumDist, e, lat, lng });
 
@@ -606,6 +659,25 @@ const M_PER_MI = 1609.344;
 const CURVINESS_SMOOTH_WINDOW = 5;
 
 /**
+ * Remove consecutive points with the same lat/lon so curviness sees a polyline with no zero-length
+ * segments. Preserves elevation when present (keeps first of each duplicate run).
+ */
+function collapseConsecutiveDuplicatePoints(
+  points: PointWithOptionalEle[]
+): PointWithOptionalEle[] {
+  if (points.length <= 1) return points;
+  const out: PointWithOptionalEle[] = [points[0]!];
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1]!;
+    const curr = points[i]!;
+    if (prev[0] !== curr[0] || prev[1] !== curr[1]) {
+      out.push(curr);
+    }
+  }
+  return out;
+}
+
+/**
  * Light moving-average smoothing of lat/lon for curviness only (map geometry unchanged).
  * Reduces GPS jitter before bearing/turn computation; window 5 preserves real bends.
  * Preserves endpoints by using only available points in the window.
@@ -765,8 +837,9 @@ function toEnrichedTrackSummary(
           lng: p.lng,
         }))
       : null;
+  const distinctPoints = collapseConsecutiveDuplicatePoints(track.points);
   const pointsForCurviness = smoothLatLonForCurviness(
-    track.points,
+    distinctPoints,
     CURVINESS_SMOOTH_WINDOW
   );
   const averageCurvinessDegPerMile = computeCurvinessDegPerMile(

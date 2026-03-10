@@ -174,6 +174,7 @@ function FitToSelectedTrack({
   bottomPaddingPx = 0,
   maxZoom = DEFAULT_FIT_MAX_ZOOM,
   ignoreMapSyncRef,
+  skipFitForMapSyncRef,
 }: {
   files: GpxFileRecordForDisplay[];
   selectedTrack: SelectedTrack | null;
@@ -186,12 +187,18 @@ function FitToSelectedTrack({
   maxZoom?: number;
   /** When set, MapToChartSync will skip updating range after we call fitBounds (avoids loop). */
   ignoreMapSyncRef?: { current: boolean };
+  /** When set, skip fitBounds this run (range was updated from map zoom/pan, not chart drag). */
+  skipFitForMapSyncRef?: { current: boolean };
 }) {
   const map = useMap();
   const filesRef = useRef(files);
   filesRef.current = files;
   useEffect(() => {
     if (!selectedTrack) return;
+    if (skipFitForMapSyncRef?.current) {
+      skipFitForMapSyncRef.current = false;
+      return;
+    }
     let bounds: L.LatLngBounds | null = null;
     if (
       chartDistanceRange &&
@@ -248,7 +255,7 @@ function FitToSelectedTrack({
       if (onMoveEnd) map.off("moveend", onMoveEnd);
       if (ignoreMapSyncRef) ignoreMapSyncRef.current = false;
     };
-  }, [map, selectedTrack, chartDistanceRange, profilePoints, trackPoints, bottomPaddingPx, maxZoom, ignoreMapSyncRef]);
+  }, [map, selectedTrack, chartDistanceRange, profilePoints, trackPoints, bottomPaddingPx, maxZoom, ignoreMapSyncRef, skipFitForMapSyncRef]);
   return null;
 }
 
@@ -272,6 +279,7 @@ function MapToChartSync({
   onMinSpanMiles,
   onVisibleRangeChange,
   ignoreMapSyncRef,
+  skipFitForMapSyncRef,
 }: {
   maxZoom: number;
   profilePoints: ProfilePoint[] | null;
@@ -281,6 +289,8 @@ function MapToChartSync({
   onMinSpanMiles: (miles: number) => void;
   onVisibleRangeChange: (range: { minD: number; maxD: number } | null) => void;
   ignoreMapSyncRef?: { current: boolean };
+  /** Set to true before onVisibleRangeChange so FitToSelectedTrack skips fitBounds (avoid overriding user zoom/pan). */
+  skipFitForMapSyncRef?: { current: boolean };
 }) {
   const map = useMap();
   const profilePointsRef = useRef(profilePoints);
@@ -355,6 +365,7 @@ function MapToChartSync({
         ) {
           return;
         }
+        if (skipFitForMapSyncRef) skipFitForMapSyncRef.current = true;
         onVisibleRangeChangeRef.current({ minD, maxD });
       }
     };
@@ -364,7 +375,7 @@ function MapToChartSync({
       map.off("moveend", updateVisibleRange);
       map.off("zoomend", updateVisibleRange);
     };
-  }, [map, profilePoints?.length, ignoreMapSyncRef]);
+  }, [map, profilePoints?.length, ignoreMapSyncRef, skipFitForMapSyncRef]);
 
   return null;
 }
@@ -616,6 +627,8 @@ export function MapView({
   const [chartDistanceRange, setChartDistanceRange] = useState<{ minD: number; maxD: number } | null>(null);
   const [minSpanMiles, setMinSpanMiles] = useState<number | null>(null);
   const ignoreMapSyncRef = useRef(false);
+  /** When set, FitToSelectedTrack skips fitBounds (range was just updated from map zoom/pan, not chart drag). */
+  const skipFitForMapSyncRef = useRef(false);
 
   useEffect(() => {
     if (
@@ -762,6 +775,7 @@ export function MapView({
             bottomPaddingPx={selectedTrack ? BOTTOM_PANEL_HEIGHT_PX : 0}
             maxZoom={basemap.maxZoom ?? DEFAULT_FIT_MAX_ZOOM}
             ignoreMapSyncRef={ignoreMapSyncRef}
+            skipFitForMapSyncRef={skipFitForMapSyncRef}
           />
           <MapToChartSync
             maxZoom={basemap.maxZoom ?? DEFAULT_FIT_MAX_ZOOM}
@@ -771,6 +785,7 @@ export function MapView({
             onMinSpanMiles={setMinSpanMiles}
             onVisibleRangeChange={setChartDistanceRange}
             ignoreMapSyncRef={ignoreMapSyncRef}
+            skipFitForMapSyncRef={skipFitForMapSyncRef}
           />
         </MapContainer>
       </div>
