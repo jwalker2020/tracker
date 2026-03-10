@@ -101,7 +101,13 @@ export async function runEnrichmentInBackground(
   let lastProgressWrite = 0;
 
   const writeProgress = async (update: Parameters<typeof updateJobProgress>[2]) => {
-    await updateJobProgress(pb, jobId, update, checkpointRecordId);
+    try {
+      await updateJobProgress(pb, jobId, update, checkpointRecordId);
+    } catch (err) {
+      demLog(
+        `Progress write failed (continuing): ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   };
 
   const isCancelled = async (): Promise<boolean> => {
@@ -174,7 +180,7 @@ export async function runEnrichmentInBackground(
             Math.round((percentComplete / 100) * WEIGHT_ENRICHMENT);
           await writeProgress({
             processedPoints,
-            totalPoints: Math.max(totalPoints, processedPoints),
+            totalPoints,
             currentPhase: "enrichment",
             currentPhasePercent: percentComplete,
             overallPercentComplete: Math.min(99, overall),

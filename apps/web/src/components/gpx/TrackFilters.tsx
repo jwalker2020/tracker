@@ -14,7 +14,7 @@ export type TrackFiltersProps = {
   filterState: TrackFilterState;
   /** Called with a partial state; merged with current so min/max updates from one slider don't overwrite the other. */
   onFilterChange: (patch: Partial<TrackFilterState>) => void;
-  /** Data bounds for sliders (from loaded tracks). */
+  /** Slider extents = selected-data min/max (from selected GPX files). */
   gradeBounds: { dataMin: number; dataMax: number };
   curvinessBounds: { dataMin: number; dataMax: number };
   totalTracks: number;
@@ -38,10 +38,10 @@ export function TrackFilters({
       <div className="space-y-4">
         <RangeFilter
           label="Average grade"
-          dataMin={0}
-          dataMax={100}
-          valueMin={Math.max(0, Math.min(100, filterState.gradeMin))}
-          valueMax={Math.max(0, Math.min(100, filterState.gradeMax))}
+          dataMin={gradeBounds.dataMin}
+          dataMax={gradeBounds.dataMax}
+          valueMin={Math.max(gradeBounds.dataMin, Math.min(gradeBounds.dataMax, filterState.gradeMin))}
+          valueMax={Math.max(gradeBounds.dataMin, Math.min(gradeBounds.dataMax, filterState.gradeMax))}
           onMinChange={(v) => onFilterChange({ gradeMin: v })}
           onMaxChange={(v) => onFilterChange({ gradeMax: v })}
           step={0.5}
@@ -51,8 +51,8 @@ export function TrackFilters({
           label="Curviness"
           dataMin={curvinessBounds.dataMin}
           dataMax={curvinessBounds.dataMax}
-          valueMin={filterState.curvinessMin}
-          valueMax={filterState.curvinessMax}
+          valueMin={Math.max(curvinessBounds.dataMin, Math.min(curvinessBounds.dataMax, filterState.curvinessMin))}
+          valueMax={Math.max(curvinessBounds.dataMin, Math.min(curvinessBounds.dataMax, filterState.curvinessMax))}
           onMinChange={(v) => onFilterChange({ curvinessMin: v })}
           onMaxChange={(v) => onFilterChange({ curvinessMax: v })}
           step={1}

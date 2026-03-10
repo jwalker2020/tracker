@@ -18,10 +18,20 @@ type ProgressState = {
   processedPoints: number;
   totalPoints: number;
   percentComplete: number;
+  elapsedMs?: number | null;
+  estimatedRemainingMs?: number | null;
   currentTrackIndex?: number;
   totalTracks?: number;
   error?: string;
 };
+
+function formatHhMmSs(totalMs: number): string {
+  const totalSeconds = Math.floor(totalMs / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
 
 const PHASE_LABELS: Record<string, string> = {
   setup: "Preparing…",
@@ -107,11 +117,20 @@ export function EnrichmentProgress({ jobId, onComplete, onError }: EnrichmentPro
 
   const pct = progress?.overallPercentComplete ?? progress?.percentComplete ?? 0;
   const processed = progress?.processedPoints ?? 0;
-  const total = Math.max(progress?.totalPoints ?? 0, processed);
+  const total = progress?.totalPoints ?? 0;
+  const displayTotal = total > 0 ? total : processed;
   const phase = progress?.currentPhase ?? "enrichment";
   const phaseLabel = PHASE_LABELS[phase] ?? phase;
   const totalTracks = progress?.totalTracks;
   const currentTrackIndex = progress?.currentTrackIndex;
+  const elapsedMs = progress?.elapsedMs;
+  const estimatedRemainingMs = progress?.estimatedRemainingMs;
+  const elapsedStr =
+    elapsedMs != null && Number.isFinite(elapsedMs) ? formatHhMmSs(elapsedMs) : null;
+  const remainingStr =
+    estimatedRemainingMs != null && Number.isFinite(estimatedRemainingMs)
+      ? formatHhMmSs(estimatedRemainingMs)
+      : null;
 
   return (
     <div className="space-y-2 rounded border border-slate-600 bg-slate-800/50 px-3 py-2" role="status" aria-live="polite">
@@ -124,13 +143,20 @@ export function EnrichmentProgress({ jobId, onComplete, onError }: EnrichmentPro
       </div>
       <p className="text-xs text-slate-400">
         {pct}%
-        {total > 0 ? ` · ${processed.toLocaleString()} / ${total.toLocaleString()} points` : ""}
+        {displayTotal > 0 ? ` · ${processed.toLocaleString()} / ${displayTotal.toLocaleString()} points` : ""}
         {totalTracks != null && totalTracks > 0 && currentTrackIndex != null
           ? ` · Track ${currentTrackIndex + 1} of ${totalTracks}`
           : totalTracks != null && totalTracks > 0
             ? ` · ${totalTracks} track${totalTracks !== 1 ? "s" : ""}`
             : ""}
       </p>
+      {(elapsedStr != null || remainingStr != null) && (
+        <p className="text-xs text-slate-500">
+          {elapsedStr != null && `Elapsed: ${elapsedStr}`}
+          {elapsedStr != null && remainingStr != null && " · "}
+          {remainingStr != null && `Remaining: ${remainingStr}`}
+        </p>
+      )}
     </div>
   );
 }

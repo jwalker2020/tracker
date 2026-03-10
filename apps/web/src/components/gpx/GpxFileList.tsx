@@ -12,18 +12,28 @@ const PHASE_LABELS: Record<string, string> = {
   completed: "Complete",
 };
 
+function formatHhMmSs(totalMs: number): string {
+  const totalSeconds = Math.floor(totalMs / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 type ProgressSnapshot = {
   status: string;
   overallPercentComplete?: number;
   currentPhase?: string;
   processedPoints?: number;
   totalPoints?: number;
+  elapsedMs?: number | null;
+  estimatedRemainingMs?: number | null;
   currentTrackIndex?: number;
   totalTracks?: number;
   error?: string;
 };
 
-const POLL_INTERVAL_MS = 2500;
+const POLL_INTERVAL_MS = 1000;
 
 function EnrichmentProgressIcon({ jobId }: { jobId: string }) {
   const [progress, setProgress] = useState<ProgressSnapshot | null>(null);
@@ -94,16 +104,41 @@ function EnrichmentProgressIcon({ jobId }: { jobId: string }) {
       lines.push(`Points: ${processed.toLocaleString()} / ${total.toLocaleString()}`);
     }
   }
-  const tooltipText = lines.join("\n");
+
+  const elapsedMs = progress?.elapsedMs;
+  const estimatedRemainingMs = progress?.estimatedRemainingMs;
+  const elapsedStr =
+    elapsedMs != null && Number.isFinite(elapsedMs) ? formatHhMmSs(elapsedMs) : null;
+  const remainingStr =
+    estimatedRemainingMs != null && Number.isFinite(estimatedRemainingMs)
+      ? formatHhMmSs(estimatedRemainingMs)
+      : null;
+  const showTimeRows = elapsedStr != null || remainingStr != null;
 
   const tooltipContent = tooltipVisible ? (
     <span
       ref={tooltipRef}
-      className="whitespace-pre-line rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-left text-xs font-normal text-slate-200 shadow-lg"
+      className="rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-left text-xs font-normal text-slate-200 shadow-lg"
       style={{ maxWidth: "260px", width: "max-content", ...tooltipStyle }}
       role="tooltip"
     >
-      {tooltipText}
+      <span className="block whitespace-pre-line">{lines.join("\n")}</span>
+      {showTimeRows && (
+        <span className="mt-1 block font-mono text-slate-300">
+          {elapsedStr != null && (
+            <span className="block">
+              <span className="inline-block w-[5.5rem] text-slate-400">Elapsed:</span>{" "}
+              {elapsedStr}
+            </span>
+          )}
+          {remainingStr != null && (
+            <span className="block">
+              <span className="inline-block w-[5.5rem] text-slate-400">Remaining:</span>{" "}
+              {remainingStr}
+            </span>
+          )}
+        </span>
+      )}
     </span>
   ) : null;
 

@@ -789,7 +789,23 @@ export async function enrichGpxWithDemPerTrack(
     manifestPath: config.manifestPath,
   });
 
-  const totalPointsEstimate = tracks.reduce((s, t) => s + t.points.length, 0);
+  // Total points in resampled space (same denominator as processedPoints) for accurate progress.
+  let totalPoints = 0;
+  for (const t of tracks) {
+    const line = lineString(t.points.map((p) => [p[1], p[0]]));
+    const distanceM = length(line, { units: "meters" });
+    const safeDistanceM = Number.isFinite(distanceM) && distanceM >= 0 ? distanceM : 0;
+    const n =
+      safeDistanceM > 0 && t.points.length > 1
+        ? Math.ceil(safeDistanceM / RESAMPLE_SPACING_M) + 1
+        : t.points.length;
+    totalPoints += n;
+  }
+
+  if (config.onProgress) {
+    config.onProgress({ processedPoints: 0, totalPoints, percentComplete: 0 });
+  }
+
   let completedPoints = 0;
   const enrichedTracks: EnrichedTrackSummary[] = [];
   const sharedSampler = new DemRasterSampler(index.basePath);
@@ -816,12 +832,12 @@ export async function enrichGpxWithDemPerTrack(
         ((data: { processedPoints: number; totalPoints: number; percentComplete: number }) => {
           const globalProcessed = progressOffset + data.processedPoints;
           const pct =
-            totalPointsEstimate > 0
-              ? Math.min(100, Math.round((globalProcessed / totalPointsEstimate) * 100))
+            totalPoints > 0
+              ? Math.min(100, Math.round((globalProcessed / totalPoints) * 100))
               : 0;
           config.onProgress!({
             processedPoints: globalProcessed,
-            totalPoints: totalPointsEstimate,
+            totalPoints,
             percentComplete: pct,
           });
         });

@@ -89,6 +89,12 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
 
   const deleteSelected = useCallback(async () => {
     if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    const message =
+      count === 1
+        ? "Delete this GPX file? This cannot be undone."
+        : `Delete ${count} selected GPX files? This cannot be undone.`;
+    if (!window.confirm(message)) return;
     setDeleting(true);
     try {
       const ids = [...selectedIds];
@@ -166,11 +172,9 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
     [selectedFiles]
   );
   useEffect(() => {
-    const gradeMin = Math.max(0, Math.min(100, dataBounds.gradeMin));
-    const gradeMax = Math.max(0, Math.min(100, dataBounds.gradeMax));
     setFilterState({
-      gradeMin,
-      gradeMax: gradeMax > gradeMin ? gradeMax : Math.min(100, gradeMin + 1),
+      gradeMin: dataBounds.gradeMin,
+      gradeMax: dataBounds.gradeMax,
       curvinessMin: dataBounds.curvinessMin,
       curvinessMax: dataBounds.curvinessMax,
     });
@@ -278,20 +282,20 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
+              title="Zoom map to selected tracks"
+              onClick={() => setFitToSelectionTrigger((t) => t + 1)}
+              className="rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-50"
+              disabled={selectedIds.size === 0}
+            >
+              Zoom to selection
+            </button>
+            <button
+              type="button"
               onClick={() => setSelectedIds(new Set())}
               disabled={selectedIds.size === 0}
               className="rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-50"
             >
               Clear selection
-            </button>
-            <button
-              type="button"
-              title="Fit map to selected tracks"
-              onClick={() => setFitToSelectionTrigger((t) => t + 1)}
-              className="rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600 disabled:opacity-50"
-              disabled={selectedIds.size === 0}
-            >
-              Fit to selection
             </button>
           </div>
           <button
@@ -315,11 +319,9 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
             totalTracks={totalTracks}
             visibleCount={visibleCount}
             onReset={() => {
-              const gradeMin = Math.max(0, Math.min(100, dataBounds.gradeMin));
-              const gradeMax = Math.max(0, Math.min(100, dataBounds.gradeMax));
               setFilterState({
-                gradeMin,
-                gradeMax: gradeMax > gradeMin ? gradeMax : Math.min(100, gradeMin + 1),
+                gradeMin: dataBounds.gradeMin,
+                gradeMax: dataBounds.gradeMax,
                 curvinessMin: dataBounds.curvinessMin,
                 curvinessMax: dataBounds.curvinessMax,
               });

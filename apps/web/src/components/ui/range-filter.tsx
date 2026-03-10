@@ -183,7 +183,7 @@ export function RangeFilter({
       </div>
       <div
         ref={trackRef}
-        className="relative h-8 w-full touch-none"
+        className="relative h-8 w-full min-w-[240px] touch-none"
         {...(DEBUG && { "data-range-filter": label })}
       >
         <div className="absolute left-0 right-0 top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-slate-600" />
