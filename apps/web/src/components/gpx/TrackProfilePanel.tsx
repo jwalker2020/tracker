@@ -5,7 +5,7 @@ import type { ProfilePoint } from "./TrackElevationProfile";
 import { TrackElevationProfile } from "./TrackElevationProfile";
 import { TrackCurvinessProfile } from "./TrackCurvinessProfile";
 import { TrackGradeProfile } from "./TrackGradeProfile";
-import { computeCurvinessProfile, computeGradeProfile } from "./track-profile-utils";
+import { computeCurvinessProfile, computeGradeProfile, smoothGradeProfile } from "./track-profile-utils";
 
 export type TrackProfilePanelProps = {
   trackName: string;
@@ -32,10 +32,12 @@ export function TrackProfilePanel({
     () => computeCurvinessProfile(profilePoints, trackPoints),
     [profilePoints, trackPoints]
   );
-  const gradeData = useMemo(
-    () => computeGradeProfile(profilePoints),
-    [profilePoints]
-  );
+  const gradeData = useMemo(() => {
+    const raw = computeGradeProfile(profilePoints);
+    if (!raw) return null;
+    const absolute = raw.map((p) => ({ d: p.d, g: Math.abs(p.g) }));
+    return smoothGradeProfile(absolute);
+  }, [profilePoints]);
 
   const distanceRange = useMemo(() => {
     if (!profilePoints || profilePoints.length < 2) return null;
@@ -45,8 +47,8 @@ export function TrackProfilePanel({
   }, [profilePoints]);
 
   return (
-    <div className="flex min-h-[420px] flex-col gap-2">
-      <div className="min-h-0 flex-1 flex flex-col min-h-[140px]">
+    <div className="flex h-full flex-col gap-1.5 min-h-0">
+      <div className="min-h-0 flex-1 flex flex-col">
         <TrackElevationProfile
           trackName={trackName}
           profilePoints={profilePoints}
@@ -56,7 +58,7 @@ export function TrackProfilePanel({
           onHoverIndex={onHoverIndex}
         />
       </div>
-      <div className="shrink-0">
+      <div className="min-h-0 flex-1 flex flex-col">
         <TrackCurvinessProfile
           trackName={trackName}
           profilePoints={profilePoints}
@@ -67,7 +69,7 @@ export function TrackProfilePanel({
           onHoverIndex={onHoverIndex}
         />
       </div>
-      <div className="shrink-0">
+      <div className="min-h-0 flex-1 flex flex-col">
         <TrackGradeProfile
           trackName={trackName}
           profilePoints={profilePoints}

@@ -134,30 +134,26 @@ export function TrackElevationProfile({
     const padE = (maxE - minE) * 0.05 || 10;
     return {
       backgroundColor: "transparent",
-      grid: { left: 48, right: 16, top: 12, bottom: 32, containLabel: false },
+      grid: { left: 56, right: 8, top: 4, bottom: 0, containLabel: false },
       xAxis: {
         type: "value",
-        name: "Distance (miles)",
-        nameLocation: "middle",
-        nameGap: 24,
-        nameTextStyle: { color: "#94a3b8", fontSize: 10 },
         min: minD,
         max: maxD,
         axisLine: { lineStyle: { color: "#475569" } },
         splitLine: { show: false },
-        axisLabel: { color: "#64748b", fontSize: 9 },
+        axisLabel: { show: false },
       },
       yAxis: {
         type: "value",
-        name: "Elevation (ft)",
+        name: "Elevation",
         nameLocation: "middle",
-        nameGap: 36,
-        nameTextStyle: { color: "#94a3b8", fontSize: 10 },
+        nameGap: 40,
+        nameTextStyle: { color: "#94a3b8", fontSize: 16 },
         min: minE - padE,
         max: maxE + padE,
         axisLine: { show: false },
         splitLine: { lineStyle: { color: "rgba(71, 85, 105, 0.3)" } },
-        axisLabel: { color: "#64748b", fontSize: 9 },
+        axisLabel: { show: false },
       },
       tooltip: {
         trigger: "axis",
@@ -437,16 +433,11 @@ export function TrackElevationProfile({
 
   return (
     <div className="flex h-full flex-col rounded border border-slate-700 bg-slate-900/95">
-      <div className="border-b border-slate-700 px-3 py-1.5">
-        <h3 className="text-sm font-medium text-slate-200">
-          Elevation profile — {trackName}
-        </h3>
-      </div>
-      <div className="min-h-0 flex-1 p-2">
+      <div className="min-h-0 flex-1 p-1.5">
         <ReactECharts
           ref={chartRef}
           option={option}
-          style={{ height: "100%", minHeight: 160 }}
+          style={{ height: "100%", minHeight: 64 }}
           opts={{ renderer: "canvas" }}
           onEvents={onEvents}
           onChartReady={onChartReady}

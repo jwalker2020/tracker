@@ -163,3 +163,35 @@ export function computeGradeProfile(
   }
   return result;
 }
+
+/** Window size for smoothing grade profile (odd; centered moving average). */
+const GRADE_SMOOTH_WINDOW = 7;
+
+/**
+ * Smooth grade profile with a centered moving average to reduce spikeyness.
+ * Keeps same length and d values; smooths g values only.
+ */
+export function smoothGradeProfile(
+  gradeProfile: { d: number; g: number }[] | null
+): { d: number; g: number }[] | null {
+  if (!gradeProfile || gradeProfile.length < 2) return gradeProfile;
+  const n = gradeProfile.length;
+  const half = Math.floor(GRADE_SMOOTH_WINDOW / 2);
+  const out: { d: number; g: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const start = Math.max(0, i - half);
+    const end = Math.min(n, i + half + 1);
+    let sum = 0;
+    let count = 0;
+    for (let j = start; j < end; j++) {
+      const g = gradeProfile[j]!.g;
+      if (Number.isFinite(g)) {
+        sum += g;
+        count++;
+      }
+    }
+    const gSmoothed = count > 0 ? sum / count : gradeProfile[i]!.g;
+    out.push({ d: gradeProfile[i]!.d, g: gSmoothed });
+  }
+  return out;
+}

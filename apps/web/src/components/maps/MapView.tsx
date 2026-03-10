@@ -129,6 +129,51 @@ function FitToSelection({
   return null;
 }
 
+function FitToSelectedTrack({
+  files,
+  selectedTrack,
+  bottomPaddingPx = 0,
+}: {
+  files: GpxFileRecordForDisplay[];
+  selectedTrack: SelectedTrack | null;
+  bottomPaddingPx?: number;
+}) {
+  const map = useMap();
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  useEffect(() => {
+    if (!selectedTrack) return;
+    const currentFiles = filesRef.current;
+    const file = currentFiles.find((f) => f.id === selectedTrack.fileId);
+    const track = file?.enrichedTracks?.[selectedTrack.trackIndex];
+    const b = track?.bounds;
+    if (
+      !b ||
+      typeof b.south !== "number" ||
+      typeof b.west !== "number" ||
+      typeof b.north !== "number" ||
+      typeof b.east !== "number"
+    )
+      return;
+    const bounds = L.latLngBounds(
+      [b.south, b.west],
+      [b.north, b.east]
+    );
+    const padding = 24;
+    const fitOptions: L.FitBoundsOptions = {
+      maxZoom: 16,
+      ...(bottomPaddingPx > 0
+        ? {
+            paddingTopLeft: L.point(padding, padding),
+            paddingBottomRight: L.point(padding, bottomPaddingPx),
+          }
+        : { padding: L.point(padding, padding) }),
+    };
+    map.fitBounds(bounds, fitOptions);
+  }, [map, selectedTrack, bottomPaddingPx]);
+  return null;
+}
+
 function GpxOverlay({
   baseUrl,
   files,
@@ -467,6 +512,11 @@ export function MapView({
             fitToSelectionTrigger={fitToSelectionTrigger}
             bottomPaddingPx={selectedTrack ? BOTTOM_PANEL_HEIGHT_PX : 0}
           />
+          <FitToSelectedTrack
+            files={files}
+            selectedTrack={selectedTrack}
+            bottomPaddingPx={selectedTrack ? BOTTOM_PANEL_HEIGHT_PX : 0}
+          />
         </MapContainer>
       </div>
       {selectedTrack && (
@@ -483,7 +533,7 @@ export function MapView({
               </div>
             )}
           </div>
-          <div className="min-w-0 flex-1 p-2 flex flex-col min-h-0 overflow-y-auto">
+          <div className="min-w-0 flex-1 p-2 flex flex-col min-h-0">
             {selectedProfile ? (
               <TrackProfilePanel
                 trackName={selectedProfile.trackName}

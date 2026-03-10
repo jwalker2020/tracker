@@ -3,8 +3,8 @@ import type { ElevationStats } from "./types";
 /** Elevation value that is valid for stats (finite number). Null = nodata / missing. */
 export type ElevationValue = number | null;
 
-/** Moving average window size for elevation smoothing. Odd number recommended (e.g. 5, 7, 9). */
-export const ELEVATION_SMOOTH_WINDOW_SIZE = 7;
+/** Moving average window size for elevation smoothing. Odd number recommended (e.g. 5, 7, 9). With 5m resampling, 15 ≈ 70m smoothing distance. */
+export const ELEVATION_SMOOTH_WINDOW_SIZE = 15;
 
 /** Minimum elevation change (m) to count toward ascent/descent. Changes smaller than this are ignored to reduce noise. ~0.3 m ≈ 1 ft. */
 export const ELEVATION_CHANGE_THRESHOLD_M = 0.3048;
