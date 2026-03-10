@@ -6,8 +6,41 @@ import type { ProfilePoint } from "./TrackElevationProfile";
 import { getLatLngForIndex } from "./TrackElevationProfile";
 
 const M_PER_MI = 1609.344;
-const MIN_SEGMENT_M = 2;
+/** Min segment length (m) for turn to count; very short segments are ignored to avoid GPS jitter. */
+const MIN_SEGMENT_M = 3;
+/** Min turning angle (deg) to count; tiny angle changes are ignored as noise. */
 const MIN_ANGLE_DEG = 2;
+
+const SMOOTH_WINDOW = 5;
+
+/**
+ * Light moving-average smoothing of lat/lng series to reduce GPS position noise
+ * before curviness. Preserves endpoints by using only available points in the window.
+ */
+function smoothLatLon(
+  points: { lat: number; lng: number }[],
+  windowSize: number
+): { lat: number; lng: number }[] {
+  const n = points.length;
+  if (n < 3 || windowSize < 2) return points;
+  const half = Math.floor(windowSize / 2);
+  const result: { lat: number; lng: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const start = Math.max(0, i - half);
+    const end = Math.min(n, i + half + 1);
+    let sumLat = 0;
+    let sumLon = 0;
+    for (let j = start; j < end; j++) {
+      sumLat += points[j]!.lat;
+      sumLon += points[j]!.lng;
+    }
+    result.push({
+      lat: sumLat / (end - start),
+      lng: sumLon / (end - start),
+    });
+  }
+  return result;
+}
 
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -28,6 +61,8 @@ function bearingDeg(lat1: number, lon1: number, lat2: number, lon2: number): num
 
 /**
  * Compute per-point curviness (deg/mi) from profile points and track geometry.
+ * GPS position noise can inflate turn-angle-based curviness; coordinates are lightly
+ * smoothed (moving average) before computing bearings and turning angles.
  * Uses same index space as elevation profile; each point gets a curviness value (0 at ends).
  */
 export function computeCurvinessProfile(
@@ -36,13 +71,14 @@ export function computeCurvinessProfile(
 ): { d: number; c: number }[] | null {
   if (!profilePoints || profilePoints.length < 3) return null;
   const n = profilePoints.length;
-  const points: { lat: number; lng: number; d: number }[] = [];
+  const rawPoints: { lat: number; lng: number; d: number }[] = [];
   for (let i = 0; i < n; i++) {
     const ll = getLatLngForIndex(profilePoints, trackPoints, i);
     const p = profilePoints[i];
     if (!ll || !p || !Number.isFinite(p.d)) return null;
-    points.push({ lat: ll[0], lng: ll[1], d: p.d });
+    rawPoints.push({ lat: ll[0], lng: ll[1], d: p.d });
   }
+  const smoothed = smoothLatLon(rawPoints, SMOOTH_WINDOW);
   const result: { d: number; c: number }[] = [];
   for (let i = 0; i < n; i++) {
     const d = profilePoints[i]!.d;
@@ -50,9 +86,9 @@ export function computeCurvinessProfile(
       result.push({ d, c: 0 });
       continue;
     }
-    const a = points[i - 1]!;
-    const b = points[i]!;
-    const c = points[i + 1]!;
+    const a = smoothed[i - 1]!;
+    const b = smoothed[i]!;
+    const c = smoothed[i + 1]!;
     const bearingAB = bearingDeg(a.lat, a.lng, b.lat, b.lng);
     const bearingBC = bearingDeg(b.lat, b.lng, c.lat, c.lng);
     let turnDeg = bearingBC - bearingAB;
@@ -69,7 +105,8 @@ export function computeCurvinessProfile(
         [b.lng, b.lat],
         [c.lng, c.lat],
       ]);
-      segLenM = (length(seg1, { units: "meters" }) + length(seg2, { units: "meters" })) / 2;
+      segLenM =
+        (length(seg1, { units: "meters" }) + length(seg2, { units: "meters" })) / 2;
     } catch {
       segLenM = 0;
     }

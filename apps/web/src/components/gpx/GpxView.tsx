@@ -199,17 +199,12 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
     const keys = new Set<string>();
     const dataGradeRange = dataBounds.gradeMax - dataBounds.gradeMin;
     const dataCurvRange = dataBounds.curvinessMax - dataBounds.curvinessMin;
-    const filterGradeRange = filterState.gradeMax - filterState.gradeMin;
-    const filterCurvRange = filterState.curvinessMax - filterState.curvinessMin;
     const atFullRange =
       (filterState.gradeMin <= dataBounds.gradeMin &&
         filterState.gradeMax >= dataBounds.gradeMax &&
         filterState.curvinessMin <= dataBounds.curvinessMin &&
         filterState.curvinessMax >= dataBounds.curvinessMax) ||
-      (dataGradeRange > 1 &&
-        dataCurvRange > 1 &&
-        filterGradeRange <= 1 &&
-        filterCurvRange <= 1);
+      (dataGradeRange <= 1 && dataCurvRange <= 1);
     for (const tr of tracks) {
       if (!Number.isFinite(tr.grade) || !Number.isFinite(tr.curviness)) continue;
       if (
@@ -311,7 +306,7 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
         {totalTracks > 0 && (
           <TrackFilters
             filterState={filterState}
-            onFilterChange={setFilterState}
+            onFilterChange={(patch) => setFilterState((prev) => ({ ...prev, ...patch }))}
             gradeBounds={{ dataMin: dataBounds.gradeMin, dataMax: dataBounds.gradeMax }}
             curvinessBounds={{
               dataMin: dataBounds.curvinessMin,

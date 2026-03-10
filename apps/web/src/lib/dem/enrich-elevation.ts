@@ -597,17 +597,49 @@ const M_TO_FT = 3.28084;
 const M_TO_MI = 1 / 1609.344;
 
 /** Minimum segment length (m) to include; shorter segments are skipped to reduce GPS jitter. */
-const CURVINESS_MIN_SEGMENT_M = 2;
+const CURVINESS_MIN_SEGMENT_M = 3;
 /** Minimum turning angle (degrees) to count; smaller turns are ignored to reduce noise. */
 const CURVINESS_MIN_ANGLE_DEG = 2;
 const M_PER_MI = 1609.344;
+const CURVINESS_SMOOTH_WINDOW = 5;
+
+/**
+ * Light moving-average smoothing of lat/lon for curviness only.
+ * GPS position noise can inflate turn-angle-based curviness; smoothing reduces jitter
+ * while preserving real bends. Preserves endpoints by using only available points in the window.
+ */
+function smoothLatLonForCurviness(
+  points: PointWithOptionalEle[],
+  windowSize: number
+): PointWithOptionalEle[] {
+  const n = points.length;
+  if (n < 3 || windowSize < 2) return points;
+  const half = Math.floor(windowSize / 2);
+  const result: PointWithOptionalEle[] = [];
+  for (let i = 0; i < n; i++) {
+    const start = Math.max(0, i - half);
+    const end = Math.min(n, i + half + 1);
+    let sumLat = 0;
+    let sumLon = 0;
+    for (let j = start; j < end; j++) {
+      sumLat += points[j]![0];
+      sumLon += points[j]![1];
+    }
+    const lat = sumLat / (end - start);
+    const lng = sumLon / (end - start);
+    const ele = points[i]?.[2];
+    result.push(ele !== undefined ? [lat, lng, ele] : [lat, lng]);
+  }
+  return result;
+}
 
 /**
  * Compute average curviness: cumulative absolute direction change per unit distance.
+ * Caller should pass coordinates that are lightly smoothed to reduce GPS noise.
  * For each interior point B (with A = prev, C = next): bearing A→B and B→C (forward azimuth),
  * turning angle = smallest angle between bearings in [-180, 180], then |angle|.
  * Sum of |turning angles| is normalized by the same path's total length → degrees per mile.
- * Straight ≈ 0; winding = higher. Noise: segments < 2 m and turns < 2° are excluded.
+ * Straight ≈ 0; winding = higher. Noise: segments < CURVINESS_MIN_SEGMENT_M and turns < CURVINESS_MIN_ANGLE_DEG are excluded.
  */
 function computeCurvinessDegPerMile(
   points: PointWithOptionalEle[],
@@ -700,7 +732,14 @@ function toEnrichedTrackSummary(
           lng: p.lng,
         }))
       : null;
-  const averageCurvinessDegPerMile = computeCurvinessDegPerMile(track.points, result.distanceM);
+  const pointsForCurviness = smoothLatLonForCurviness(
+    track.points,
+    CURVINESS_SMOOTH_WINDOW
+  );
+  const averageCurvinessDegPerMile = computeCurvinessDegPerMile(
+    pointsForCurviness,
+    result.distanceM
+  );
 
   return {
     trackIndex: track.trackIndex,

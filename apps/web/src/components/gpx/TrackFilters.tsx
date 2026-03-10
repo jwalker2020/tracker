@@ -12,7 +12,8 @@ export type TrackFilterState = {
 export type TrackFiltersProps = {
   /** Current filter bounds (controlled). */
   filterState: TrackFilterState;
-  onFilterChange: (state: TrackFilterState) => void;
+  /** Called with a partial state; merged with current so min/max updates from one slider don't overwrite the other. */
+  onFilterChange: (patch: Partial<TrackFilterState>) => void;
   /** Data bounds for sliders (from loaded tracks). */
   gradeBounds: { dataMin: number; dataMax: number };
   curvinessBounds: { dataMin: number; dataMax: number };
@@ -41,8 +42,8 @@ export function TrackFilters({
           dataMax={100}
           valueMin={Math.max(0, Math.min(100, filterState.gradeMin))}
           valueMax={Math.max(0, Math.min(100, filterState.gradeMax))}
-          onMinChange={(v) => onFilterChange({ ...filterState, gradeMin: v })}
-          onMaxChange={(v) => onFilterChange({ ...filterState, gradeMax: v })}
+          onMinChange={(v) => onFilterChange({ gradeMin: v })}
+          onMaxChange={(v) => onFilterChange({ gradeMax: v })}
           step={0.5}
           unit="%"
         />
@@ -52,8 +53,8 @@ export function TrackFilters({
           dataMax={curvinessBounds.dataMax}
           valueMin={filterState.curvinessMin}
           valueMax={filterState.curvinessMax}
-          onMinChange={(v) => onFilterChange({ ...filterState, curvinessMin: v })}
-          onMaxChange={(v) => onFilterChange({ ...filterState, curvinessMax: v })}
+          onMinChange={(v) => onFilterChange({ curvinessMin: v })}
+          onMaxChange={(v) => onFilterChange({ curvinessMax: v })}
           step={1}
           unit=" °/mi"
         />
