@@ -173,6 +173,7 @@ function FitToSelectedTrack({
   trackPoints,
   bottomPaddingPx = 0,
   maxZoom = DEFAULT_FIT_MAX_ZOOM,
+  ignoreMapSyncRef,
 }: {
   files: GpxFileRecordForDisplay[];
   selectedTrack: SelectedTrack | null;
@@ -183,6 +184,8 @@ function FitToSelectedTrack({
   bottomPaddingPx?: number;
   /** Cap zoom when fitting; should match tile layer (e.g. basemap.maxZoom). */
   maxZoom?: number;
+  /** When set, MapToChartSync will skip updating range after we call fitBounds (avoids loop). */
+  ignoreMapSyncRef?: { current: boolean };
 }) {
   const map = useMap();
   const filesRef = useRef(files);
@@ -231,8 +234,138 @@ function FitToSelectedTrack({
           }
         : { padding: L.point(padding, padding) }),
     };
+    let onMoveEnd: (() => void) | undefined;
+    if (ignoreMapSyncRef) {
+      ignoreMapSyncRef.current = true;
+      onMoveEnd = () => {
+        ignoreMapSyncRef.current = false;
+        map.off("moveend", onMoveEnd!);
+      };
+      map.on("moveend", onMoveEnd);
+    }
     map.fitBounds(bounds, fitOptions);
-  }, [map, selectedTrack, chartDistanceRange, profilePoints, trackPoints, bottomPaddingPx, maxZoom]);
+    return () => {
+      if (onMoveEnd) map.off("moveend", onMoveEnd);
+      if (ignoreMapSyncRef) ignoreMapSyncRef.current = false;
+    };
+  }, [map, selectedTrack, chartDistanceRange, profilePoints, trackPoints, bottomPaddingPx, maxZoom, ignoreMapSyncRef]);
+  return null;
+}
+
+/** Meters per pixel at zoom 0 at equator (Web Mercator). */
+const METERS_PER_PIXEL_ZOOM0 = 156543.03392;
+const METERS_TO_MILES = 1 / 1609.344;
+
+/** Epsilon for comparing distance range (miles) to avoid redundant state updates. */
+const RANGE_EPSILON_MI = 0.0001;
+
+/**
+ * Syncs map viewport with chart range: reports minimum chart span (so chart can't zoom past map)
+ * and visible distance range when the user pans/zooms the map. Skips updates when ignoreRef is true
+ * (e.g. right after we programmatically fitBounds) to avoid update loops.
+ */
+function MapToChartSync({
+  maxZoom,
+  profilePoints,
+  trackPoints,
+  currentChartRange,
+  onMinSpanMiles,
+  onVisibleRangeChange,
+  ignoreMapSyncRef,
+}: {
+  maxZoom: number;
+  profilePoints: ProfilePoint[] | null;
+  trackPoints: [number, number][] | null;
+  /** Current chart range so we can skip updating when visible range is effectively the same. */
+  currentChartRange: { minD: number; maxD: number } | null;
+  onMinSpanMiles: (miles: number) => void;
+  onVisibleRangeChange: (range: { minD: number; maxD: number } | null) => void;
+  ignoreMapSyncRef?: { current: boolean };
+}) {
+  const map = useMap();
+  const profilePointsRef = useRef(profilePoints);
+  const trackPointsRef = useRef(trackPoints);
+  const currentChartRangeRef = useRef(currentChartRange);
+  const onMinSpanMilesRef = useRef(onMinSpanMiles);
+  const onVisibleRangeChangeRef = useRef(onVisibleRangeChange);
+  profilePointsRef.current = profilePoints;
+  trackPointsRef.current = trackPoints;
+  currentChartRangeRef.current = currentChartRange;
+  onMinSpanMilesRef.current = onMinSpanMiles;
+  onVisibleRangeChangeRef.current = onVisibleRangeChange;
+
+  useEffect(() => {
+    if (maxZoom < 0 || !profilePoints?.length) return;
+    const updateMinSpan = () => {
+      const size = map.getSize();
+      if (!size || size.x <= 0 || size.y <= 0) return;
+      const center = map.getCenter();
+      const latRad = (center.lat * Math.PI) / 180;
+      const metersPerPixel =
+        (METERS_PER_PIXEL_ZOOM0 * Math.cos(latRad)) / Math.pow(2, maxZoom);
+      const minDimensionPx = Math.min(size.x, size.y);
+      const minSpanMeters = minDimensionPx * metersPerPixel;
+      const minSpanMiles = minSpanMeters * METERS_TO_MILES;
+      onMinSpanMilesRef.current(minSpanMiles);
+    };
+    updateMinSpan();
+    map.on("resize", updateMinSpan);
+    return () => {
+      map.off("resize", updateMinSpan);
+    };
+  }, [map, maxZoom, profilePoints?.length]);
+
+  useEffect(() => {
+    if (!profilePoints?.length) return;
+    const updateVisibleRange = () => {
+      if (ignoreMapSyncRef?.current) return;
+      const pts = profilePointsRef.current;
+      const trackPts = trackPointsRef.current;
+      if (!pts?.length) return;
+      const bounds = map.getBounds();
+      let minD = Infinity;
+      let maxD = -Infinity;
+      let anyInView = false;
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const d = p?.d;
+        if (d == null || !Number.isFinite(d)) continue;
+        let lat: number;
+        let lng: number;
+        if (p.lat != null && p.lng != null && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
+          lat = p.lat;
+          lng = p.lng;
+        } else if (trackPts && trackPts.length >= 2) {
+          const ll = getLatLngForIndex(pts, trackPts, i);
+          if (!ll) continue;
+          [lat, lng] = ll;
+        } else continue;
+        if (bounds.contains([lat, lng])) {
+          anyInView = true;
+          if (d < minD) minD = d;
+          if (d > maxD) maxD = d;
+        }
+      }
+      if (anyInView && Number.isFinite(minD) && Number.isFinite(maxD)) {
+        const cur = currentChartRangeRef.current;
+        if (
+          cur &&
+          Math.abs(cur.minD - minD) < RANGE_EPSILON_MI &&
+          Math.abs(cur.maxD - maxD) < RANGE_EPSILON_MI
+        ) {
+          return;
+        }
+        onVisibleRangeChangeRef.current({ minD, maxD });
+      }
+    };
+    map.on("moveend", updateVisibleRange);
+    map.on("zoomend", updateVisibleRange);
+    return () => {
+      map.off("moveend", updateVisibleRange);
+      map.off("zoomend", updateVisibleRange);
+    };
+  }, [map, profilePoints?.length, ignoreMapSyncRef]);
+
   return null;
 }
 
@@ -481,6 +614,8 @@ export function MapView({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [selectedTrackPoints, setSelectedTrackPoints] = useState<[number, number][] | null>(null);
   const [chartDistanceRange, setChartDistanceRange] = useState<{ minD: number; maxD: number } | null>(null);
+  const [minSpanMiles, setMinSpanMiles] = useState<number | null>(null);
+  const ignoreMapSyncRef = useRef(false);
 
   useEffect(() => {
     if (
@@ -535,6 +670,47 @@ export function MapView({
     );
   }, [hoveredIndex, selectedProfile?.profilePoints, selectedTrackPoints]);
 
+  const handleChartZoomChange = useCallback(
+    (range: { minD: number; maxD: number } | null) => {
+      if (range === null) {
+        setChartDistanceRange(null);
+        return;
+      }
+      const profilePts = selectedProfile?.profilePoints;
+      if (!profilePts?.length) {
+        setChartDistanceRange(range);
+        return;
+      }
+      const dVals = profilePts.map((p) => p.d).filter((d) => Number.isFinite(d));
+      if (dVals.length < 2) {
+        setChartDistanceRange(range);
+        return;
+      }
+      const baseMin = Math.min(...dVals);
+      const baseMax = Math.max(...dVals);
+      const span = range.maxD - range.minD;
+      const minSpan = minSpanMiles ?? 0;
+      if (minSpan > 0 && span < minSpan) {
+        const center = (range.minD + range.maxD) / 2;
+        const half = minSpan / 2;
+        let newMin = center - half;
+        let newMax = center + half;
+        if (newMin < baseMin) {
+          newMin = baseMin;
+          newMax = Math.min(baseMax, baseMin + minSpan);
+        }
+        if (newMax > baseMax) {
+          newMax = baseMax;
+          newMin = Math.max(baseMin, baseMax - minSpan);
+        }
+        setChartDistanceRange({ minD: newMin, maxD: newMax });
+      } else {
+        setChartDistanceRange(range);
+      }
+    },
+    [selectedProfile?.profilePoints, minSpanMiles]
+  );
+
   return (
     <div className={`flex h-full w-full flex-col overflow-visible ${className}`}>
       <div className="relative min-h-0 flex-1">
@@ -585,6 +761,16 @@ export function MapView({
             trackPoints={selectedTrackPoints}
             bottomPaddingPx={selectedTrack ? BOTTOM_PANEL_HEIGHT_PX : 0}
             maxZoom={basemap.maxZoom ?? DEFAULT_FIT_MAX_ZOOM}
+            ignoreMapSyncRef={ignoreMapSyncRef}
+          />
+          <MapToChartSync
+            maxZoom={basemap.maxZoom ?? DEFAULT_FIT_MAX_ZOOM}
+            profilePoints={selectedProfile?.profilePoints ?? null}
+            trackPoints={selectedTrackPoints}
+            currentChartRange={chartDistanceRange}
+            onMinSpanMiles={setMinSpanMiles}
+            onVisibleRangeChange={setChartDistanceRange}
+            ignoreMapSyncRef={ignoreMapSyncRef}
           />
         </MapContainer>
       </div>
@@ -610,7 +796,8 @@ export function MapView({
                 trackPoints={selectedTrackPoints}
                 hoveredIndex={hoveredIndex}
                 onHoverIndex={onHoverIndex}
-                onChartZoomChange={setChartDistanceRange}
+                chartDistanceRange={chartDistanceRange}
+                onChartZoomChange={handleChartZoomChange}
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-slate-400">
