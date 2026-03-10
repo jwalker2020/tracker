@@ -71,32 +71,6 @@ export function TrackGradeProfile({
   chartDataRef.current = chartData;
   onHoverIndexRef.current = onHoverIndex;
 
-  const hoverMarkLine = useMemo(() => {
-    if (hoveredIndex == null || !profilePoints?.length || hoveredIndex < 0 || hoveredIndex >= profilePoints.length)
-      return undefined;
-    const d = profilePoints[hoveredIndex]?.d;
-    if (d == null || !Number.isFinite(d)) return undefined;
-    const g =
-      gradeData && hoveredIndex >= 0 && hoveredIndex < gradeData.length
-        ? gradeData[hoveredIndex]?.g
-        : undefined;
-    const labelText =
-      g != null && Number.isFinite(g) ? `${Math.abs(Number(g)).toFixed(1)}%` : "";
-    return {
-      silent: true,
-      symbol: "none",
-      lineStyle: { color: "#94a3b8", type: "solid", width: 1 },
-      label: {
-        show: Boolean(labelText),
-        formatter: labelText,
-        position: "insideEndTop",
-        color: "#e2e8f0",
-        fontSize: 10,
-      },
-      data: [{ xAxis: d }],
-    };
-  }, [hoveredIndex, profilePoints, gradeData]);
-
   const option: EChartsOption = useMemo(() => {
     if (!chartData || chartData.length < 2) return {};
     const minD =
@@ -108,7 +82,7 @@ export function TrackGradeProfile({
     const padG = (maxG - minG) * 0.05 || 1;
     return {
       backgroundColor: "transparent",
-      grid: { left: 56, right: 8, top: 4, bottom: 0, containLabel: false },
+      grid: { left: 56, right: 8, top: 4, bottom: 8, containLabel: false },
       xAxis: {
         type: "value",
         min: minD,
@@ -165,11 +139,10 @@ export function TrackGradeProfile({
               ],
             },
           },
-          ...(hoverMarkLine ? { markLine: hoverMarkLine } : {}),
         },
       ],
     };
-  }, [chartData, hoverMarkLine, distanceRange]);
+  }, [chartData, distanceRange]);
 
   const scheduleHoverFlush = useCallback(() => {
     if (rafIdRef.current != null) return;

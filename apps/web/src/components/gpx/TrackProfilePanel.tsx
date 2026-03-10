@@ -92,7 +92,7 @@ export function TrackProfilePanel({
           baseDistanceRange={baseDistanceRange}
         />
       </div>
-      <div className="min-h-0 flex-1 flex flex-col">
+      <div className="min-h-0 flex-1 flex flex-col pb-1">
         <TrackGradeProfile
           trackName={trackName}
           profilePoints={profilePoints}

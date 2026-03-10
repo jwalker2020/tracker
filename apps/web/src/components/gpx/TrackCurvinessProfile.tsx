@@ -77,32 +77,6 @@ export function TrackCurvinessProfile({
   chartDataRef.current = chartData;
   onHoverIndexRef.current = onHoverIndex;
 
-  const hoverMarkLine = useMemo(() => {
-    if (hoveredIndex == null || !profilePoints?.length || hoveredIndex < 0 || hoveredIndex >= profilePoints.length)
-      return undefined;
-    const d = profilePoints[hoveredIndex]?.d;
-    if (d == null || !Number.isFinite(d)) return undefined;
-    const c =
-      curvinessData && hoveredIndex >= 0 && hoveredIndex < curvinessData.length
-        ? curvinessData[hoveredIndex]?.c
-        : undefined;
-    const labelText =
-      c != null && Number.isFinite(c) ? `${Number(c).toFixed(1)} °/mi` : "";
-    return {
-      silent: true,
-      symbol: "none",
-      lineStyle: { color: "#94a3b8", type: "solid", width: 1 },
-      label: {
-        show: Boolean(labelText),
-        formatter: labelText,
-        position: "insideEndTop",
-        color: "#e2e8f0",
-        fontSize: 10,
-      },
-      data: [{ xAxis: d }],
-    };
-  }, [hoveredIndex, profilePoints, curvinessData]);
-
   const option: EChartsOption = useMemo(() => {
     if (!chartData || chartData.length < 2) return {};
     const minD =
@@ -171,11 +145,10 @@ export function TrackCurvinessProfile({
               ],
             },
           },
-          ...(hoverMarkLine ? { markLine: hoverMarkLine } : {}),
         },
       ],
     };
-  }, [chartData, hoverMarkLine, distanceRange]);
+  }, [chartData, distanceRange]);
 
   const scheduleHoverFlush = useCallback(() => {
     if (rafIdRef.current != null) return;

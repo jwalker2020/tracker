@@ -122,30 +122,6 @@ export function TrackElevationProfile({
   chartDataRef.current = chartData;
   onHoverIndexRef.current = onHoverIndex;
 
-  const hoverMarkLine = useMemo(() => {
-    if (hoveredIndex == null || !profilePoints?.length || hoveredIndex < 0 || hoveredIndex >= profilePoints.length)
-      return undefined;
-    const p = profilePoints[hoveredIndex];
-    const d = p?.d;
-    if (d == null || !Number.isFinite(d)) return undefined;
-    const e = p?.e;
-    const labelText =
-      e != null && Number.isFinite(e) ? `${Math.round(e).toLocaleString()} ft` : "";
-    return {
-      silent: true,
-      symbol: "none",
-      lineStyle: { color: "#94a3b8", type: "solid", width: 1 },
-      label: {
-        show: Boolean(labelText),
-        formatter: labelText,
-        position: "insideEndTop",
-        color: "#e2e8f0",
-        fontSize: 10,
-      },
-      data: [{ xAxis: d }],
-    };
-  }, [hoveredIndex, profilePoints]);
-
   const option: EChartsOption = useMemo(() => {
     if (!chartData || chartData.length < 2) return {};
     const minD =
@@ -214,11 +190,10 @@ export function TrackElevationProfile({
               ],
             },
           },
-          ...(hoverMarkLine ? { markLine: hoverMarkLine } : {}),
         },
       ],
     };
-  }, [chartData, hoverMarkLine, distanceRange]);
+  }, [chartData, distanceRange]);
 
   const scheduleHoverFlush = useCallback(() => {
     if (rafIdRef.current != null) return;
