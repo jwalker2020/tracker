@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ProfilePoint } from "./TrackElevationProfile";
 import { TrackElevationProfile } from "./TrackElevationProfile";
 import { TrackCurvinessProfile } from "./TrackCurvinessProfile";
@@ -15,6 +15,8 @@ export type TrackProfilePanelProps = {
   hoveredIndex: number | null;
   /** Called when user hovers either chart. */
   onHoverIndex: (index: number | null) => void;
+  /** Called when chart zoom changes (drag-zoom or double-click reset) so map can sync. */
+  onChartZoomChange?: (range: { minD: number; maxD: number } | null) => void;
 };
 
 /**
@@ -27,6 +29,7 @@ export function TrackProfilePanel({
   trackPoints,
   hoveredIndex,
   onHoverIndex,
+  onChartZoomChange,
 }: TrackProfilePanelProps) {
   const curvinessData = useMemo(
     () => computeCurvinessProfile(profilePoints, trackPoints),
@@ -39,12 +42,28 @@ export function TrackProfilePanel({
     return smoothGradeProfile(absolute);
   }, [profilePoints]);
 
-  const distanceRange = useMemo(() => {
+  const baseDistanceRange = useMemo(() => {
     if (!profilePoints || profilePoints.length < 2) return null;
     const dVals = profilePoints.map((p) => p.d).filter((d) => Number.isFinite(d));
     if (dVals.length < 2) return null;
     return { minD: Math.min(...dVals), maxD: Math.max(...dVals) };
   }, [profilePoints]);
+
+  const [zoomedRange, setZoomedRange] = useState<{ minD: number; maxD: number } | null>(null);
+  useEffect(() => {
+    setZoomedRange(null);
+    onChartZoomChange?.(null);
+  }, [profilePoints, onChartZoomChange]);
+  const distanceRange = zoomedRange ?? baseDistanceRange;
+
+  const onZoomRange = useCallback((minD: number, maxD: number) => {
+    setZoomedRange({ minD, maxD });
+    onChartZoomChange?.({ minD, maxD });
+  }, [onChartZoomChange]);
+  const onResetZoom = useCallback(() => {
+    setZoomedRange(null);
+    onChartZoomChange?.(null);
+  }, [onChartZoomChange]);
 
   return (
     <div className="flex h-full flex-col gap-1.5 min-h-0">
@@ -56,6 +75,10 @@ export function TrackProfilePanel({
           distanceRange={distanceRange}
           hoveredIndex={hoveredIndex}
           onHoverIndex={onHoverIndex}
+          onZoomRange={onZoomRange}
+          onResetZoom={onResetZoom}
+          isZoomed={zoomedRange != null}
+          baseDistanceRange={baseDistanceRange}
         />
       </div>
       <div className="min-h-0 flex-1 flex flex-col">
@@ -67,6 +90,10 @@ export function TrackProfilePanel({
           distanceRange={distanceRange}
           hoveredIndex={hoveredIndex}
           onHoverIndex={onHoverIndex}
+          onZoomRange={onZoomRange}
+          onResetZoom={onResetZoom}
+          isZoomed={zoomedRange != null}
+          baseDistanceRange={baseDistanceRange}
         />
       </div>
       <div className="min-h-0 flex-1 flex flex-col">
@@ -78,6 +105,10 @@ export function TrackProfilePanel({
           distanceRange={distanceRange}
           hoveredIndex={hoveredIndex}
           onHoverIndex={onHoverIndex}
+          onZoomRange={onZoomRange}
+          onResetZoom={onResetZoom}
+          isZoomed={zoomedRange != null}
+          baseDistanceRange={baseDistanceRange}
         />
       </div>
     </div>

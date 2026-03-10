@@ -87,15 +87,21 @@ function parseBoundsJson(boundsJson: string): L.LatLngBounds | null {
 /** Height in px of the bottom chart panel when a track is selected; fit bounds leaves this as padding so tracks fit in the visible map. */
 const BOTTOM_PANEL_HEIGHT_PX = 320;
 
+/** Default max zoom for fitBounds when basemap max is not available (e.g. USGS 16). */
+const DEFAULT_FIT_MAX_ZOOM = 19;
+
 function FitToSelection({
   files,
   fitToSelectionTrigger,
   bottomPaddingPx = 0,
+  maxZoom = DEFAULT_FIT_MAX_ZOOM,
 }: {
   files: GpxFileRecordForDisplay[];
   fitToSelectionTrigger: number;
   /** When > 0, fitBounds uses this as bottom padding so bounds fit in the visible map above the panel. */
   bottomPaddingPx?: number;
+  /** Cap zoom when fitting; should match tile layer (e.g. basemap.maxZoom) so tiles remain available. */
+  maxZoom?: number;
 }) {
   const map = useMap();
   const filesRef = useRef(files);
@@ -116,7 +122,7 @@ function FitToSelection({
     }
     const padding = 24;
     const fitOptions: L.FitBoundsOptions = {
-      maxZoom: 16,
+      maxZoom,
       ...(bottomPaddingPx > 0
         ? {
             paddingTopLeft: L.point(padding, padding),
@@ -125,43 +131,99 @@ function FitToSelection({
         : { padding: L.point(padding, padding) }),
     };
     map.fitBounds(combined, fitOptions);
-  }, [map, fitToSelectionTrigger, bottomPaddingPx]);
+  }, [map, fitToSelectionTrigger, bottomPaddingPx, maxZoom]);
   return null;
+}
+
+function boundsFromSegment(
+  profilePoints: ProfilePoint[],
+  trackPoints: [number, number][] | null,
+  minD: number,
+  maxD: number
+): L.LatLngBounds | null {
+  const points: L.LatLng[] = [];
+  for (let i = 0; i < profilePoints.length; i++) {
+    const p = profilePoints[i];
+    const d = p?.d;
+    if (d == null || !Number.isFinite(d) || d < minD || d > maxD) continue;
+    let lat: number;
+    let lng: number;
+    if (p.lat != null && p.lng != null && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
+      lat = p.lat;
+      lng = p.lng;
+    } else if (trackPoints && trackPoints.length >= 2) {
+      const ll = getLatLngForIndex(profilePoints, trackPoints, i);
+      if (!ll) continue;
+      [lat, lng] = ll;
+    } else {
+      continue;
+    }
+    points.push(L.latLng(lat, lng));
+  }
+  if (points.length === 0) return null;
+  const bounds = L.latLngBounds(points);
+  return bounds.isValid() ? bounds : null;
 }
 
 function FitToSelectedTrack({
   files,
   selectedTrack,
+  chartDistanceRange,
+  profilePoints,
+  trackPoints,
   bottomPaddingPx = 0,
+  maxZoom = DEFAULT_FIT_MAX_ZOOM,
 }: {
   files: GpxFileRecordForDisplay[];
   selectedTrack: SelectedTrack | null;
+  /** When set, fit map to this distance segment instead of full track. */
+  chartDistanceRange: { minD: number; maxD: number } | null;
+  profilePoints: ProfilePoint[] | null;
+  trackPoints: [number, number][] | null;
   bottomPaddingPx?: number;
+  /** Cap zoom when fitting; should match tile layer (e.g. basemap.maxZoom). */
+  maxZoom?: number;
 }) {
   const map = useMap();
   const filesRef = useRef(files);
   filesRef.current = files;
   useEffect(() => {
     if (!selectedTrack) return;
-    const currentFiles = filesRef.current;
-    const file = currentFiles.find((f) => f.id === selectedTrack.fileId);
-    const track = file?.enrichedTracks?.[selectedTrack.trackIndex];
-    const b = track?.bounds;
+    let bounds: L.LatLngBounds | null = null;
     if (
-      !b ||
-      typeof b.south !== "number" ||
-      typeof b.west !== "number" ||
-      typeof b.north !== "number" ||
-      typeof b.east !== "number"
-    )
-      return;
-    const bounds = L.latLngBounds(
-      [b.south, b.west],
-      [b.north, b.east]
-    );
+      chartDistanceRange &&
+      profilePoints &&
+      profilePoints.length >= 2 &&
+      (profilePoints.some((p) => p.lat != null && p.lng != null) || (trackPoints && trackPoints.length >= 2))
+    ) {
+      bounds = boundsFromSegment(
+        profilePoints,
+        trackPoints,
+        chartDistanceRange.minD,
+        chartDistanceRange.maxD
+      );
+    }
+    if (!bounds) {
+      const currentFiles = filesRef.current;
+      const file = currentFiles.find((f) => f.id === selectedTrack.fileId);
+      const track = file?.enrichedTracks?.[selectedTrack.trackIndex];
+      const b = track?.bounds;
+      if (
+        !b ||
+        typeof b.south !== "number" ||
+        typeof b.west !== "number" ||
+        typeof b.north !== "number" ||
+        typeof b.east !== "number"
+      )
+        return;
+      bounds = L.latLngBounds(
+        [b.south, b.west],
+        [b.north, b.east]
+      );
+    }
     const padding = 24;
     const fitOptions: L.FitBoundsOptions = {
-      maxZoom: 16,
+      maxZoom,
       ...(bottomPaddingPx > 0
         ? {
             paddingTopLeft: L.point(padding, padding),
@@ -170,7 +232,7 @@ function FitToSelectedTrack({
         : { padding: L.point(padding, padding) }),
     };
     map.fitBounds(bounds, fitOptions);
-  }, [map, selectedTrack, bottomPaddingPx]);
+  }, [map, selectedTrack, chartDistanceRange, profilePoints, trackPoints, bottomPaddingPx, maxZoom]);
   return null;
 }
 
@@ -418,6 +480,7 @@ export function MapView({
   const [selectedTrack, setSelectedTrack] = useState<SelectedTrack | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [selectedTrackPoints, setSelectedTrackPoints] = useState<[number, number][] | null>(null);
+  const [chartDistanceRange, setChartDistanceRange] = useState<{ minD: number; maxD: number } | null>(null);
 
   useEffect(() => {
     if (
@@ -432,6 +495,7 @@ export function MapView({
   useEffect(() => {
     setHoveredIndex(null);
     setSelectedTrackPoints(null);
+    setChartDistanceRange(null);
   }, [selectedTrack]);
 
   useEffect(() => {
@@ -511,11 +575,16 @@ export function MapView({
             files={files}
             fitToSelectionTrigger={fitToSelectionTrigger}
             bottomPaddingPx={selectedTrack ? BOTTOM_PANEL_HEIGHT_PX : 0}
+            maxZoom={basemap.maxZoom ?? DEFAULT_FIT_MAX_ZOOM}
           />
           <FitToSelectedTrack
             files={files}
             selectedTrack={selectedTrack}
+            chartDistanceRange={chartDistanceRange}
+            profilePoints={selectedProfile?.profilePoints ?? null}
+            trackPoints={selectedTrackPoints}
             bottomPaddingPx={selectedTrack ? BOTTOM_PANEL_HEIGHT_PX : 0}
+            maxZoom={basemap.maxZoom ?? DEFAULT_FIT_MAX_ZOOM}
           />
         </MapContainer>
       </div>
@@ -541,6 +610,7 @@ export function MapView({
                 trackPoints={selectedTrackPoints}
                 hoveredIndex={hoveredIndex}
                 onHoverIndex={onHoverIndex}
+                onChartZoomChange={setChartDistanceRange}
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-slate-400">

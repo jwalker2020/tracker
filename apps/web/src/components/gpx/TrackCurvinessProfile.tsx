@@ -21,6 +21,10 @@ type TrackCurvinessProfileProps = {
   hoveredIndex?: number | null;
   /** Called with profile index on chart hover, null on leave. */
   onHoverIndex?: (index: number | null) => void;
+  onZoomRange?: (minD: number, maxD: number) => void;
+  onResetZoom?: () => void;
+  isZoomed?: boolean;
+  baseDistanceRange?: { minD: number; maxD: number } | null;
 };
 
 export function TrackCurvinessProfile({
@@ -31,6 +35,10 @@ export function TrackCurvinessProfile({
   distanceRange = null,
   hoveredIndex = null,
   onHoverIndex,
+  onZoomRange,
+  onResetZoom,
+  isZoomed = false,
+  baseDistanceRange = null,
 }: TrackCurvinessProfileProps) {
   const canSyncHover = Boolean(
     onHoverIndex &&
@@ -48,6 +56,17 @@ export function TrackCurvinessProfile({
   const pendingIndexRef = useRef<number | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const scheduleHoverFlushRef = useRef<() => void>(() => {});
+  const draggingRef = useRef(false);
+  const zoomStartDataXRef = useRef<number | null>(null);
+  const zoomEndPixelRef = useRef<[number, number] | null>(null);
+  const onZoomRangeRef = useRef(onZoomRange);
+  const onResetZoomRef = useRef(onResetZoom);
+  const isZoomedRef = useRef(isZoomed);
+  const baseDistanceRangeRef = useRef(baseDistanceRange);
+  onZoomRangeRef.current = onZoomRange;
+  onResetZoomRef.current = onResetZoom;
+  isZoomedRef.current = isZoomed;
+  baseDistanceRangeRef.current = baseDistanceRange;
 
   const chartData = useMemo(() => {
     if (!curvinessData || curvinessData.length < 2) return null;
@@ -288,11 +307,16 @@ export function TrackCurvinessProfile({
       };
       zrCleanupRef.current?.();
       zrCleanupRef.current = null;
-      if (!canSyncHover || !ec?.getZr) return;
+      if (!ec?.getZr) return;
       const zr = ec.getZr();
       if (!zr?.on) return;
 
       const handleMove = (zrEvent: { offsetX: number; offsetY: number }) => {
+        if (draggingRef.current) {
+          zoomEndPixelRef.current = [zrEvent.offsetX, zrEvent.offsetY];
+          return;
+        }
+        if (!canSyncHover) return;
         const pts = profilePointsRef.current;
         const data = chartDataRef.current;
         if (!pts || !data?.length) return;
@@ -352,14 +376,75 @@ export function TrackCurvinessProfile({
         }
       };
 
+      const handleMouseDown = (zrEvent: { offsetX: number; offsetY: number }) => {
+        if (!onZoomRangeRef.current) return;
+        const point = ec.convertFromPixel?.(
+          { seriesIndex: 0 },
+          [zrEvent.offsetX, zrEvent.offsetY]
+        ) as [number, number] | null | undefined;
+        if (point == null || !Array.isArray(point)) return;
+        const xVal = Number(point[0]);
+        if (!Number.isFinite(xVal)) return;
+        draggingRef.current = true;
+        zoomStartDataXRef.current = xVal;
+        zoomEndPixelRef.current = [zrEvent.offsetX, zrEvent.offsetY];
+      };
+
+      const handleMouseUp = () => {
+        if (!draggingRef.current) return;
+        const startX = zoomStartDataXRef.current;
+        draggingRef.current = false;
+        zoomStartDataXRef.current = null;
+        const endPixel = zoomEndPixelRef.current;
+        zoomEndPixelRef.current = null;
+        if (startX == null || !endPixel || !onZoomRangeRef.current) return;
+        const point = ec.convertFromPixel?.(
+          { seriesIndex: 0 },
+          endPixel
+        ) as [number, number] | null | undefined;
+        if (point == null || !Array.isArray(point)) return;
+        const endX = Number(point[0]);
+        if (!Number.isFinite(endX)) return;
+        let minD = Math.min(startX, endX);
+        let maxD = Math.max(startX, endX);
+        const base = baseDistanceRangeRef.current;
+        const fullSpan = base ? base.maxD - base.minD : maxD - minD;
+        const minSpan = Math.max(0.001, fullSpan * 0.005);
+        if (maxD - minD < minSpan) return;
+        onZoomRangeRef.current(minD, maxD);
+      };
+
+      const handleGlobalOut = () => {
+        if (draggingRef.current) {
+          draggingRef.current = false;
+          zoomStartDataXRef.current = null;
+          zoomEndPixelRef.current = null;
+        }
+        if (canSyncHover) handleOut();
+      };
+
+      const handleDblClick = () => {
+        if (isZoomedRef.current && onResetZoomRef.current) {
+          onResetZoomRef.current();
+        }
+      };
+
       zr.on("mousemove", handleMove);
-      zr.on("globalout", handleOut);
+      zr.on("globalout", handleGlobalOut);
+      if (onZoomRange || onResetZoom) {
+        zr.on("mousedown", handleMouseDown);
+        zr.on("mouseup", handleMouseUp);
+        zr.on("dblclick", handleDblClick);
+      }
       zrCleanupRef.current = () => {
         zr.off("mousemove", handleMove);
-        zr.off("globalout", handleOut);
+        zr.off("globalout", handleGlobalOut);
+        zr.off("mousedown", handleMouseDown);
+        zr.off("mouseup", handleMouseUp);
+        zr.off("dblclick", handleDblClick);
       };
     },
-    [canSyncHover]
+    [canSyncHover, onZoomRange, onResetZoom]
   );
 
   useEffect(() => {
