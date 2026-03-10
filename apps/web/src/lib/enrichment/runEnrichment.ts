@@ -244,17 +244,37 @@ export async function runEnrichmentInBackground(
     if (await isCancelled()) {
       return;
     }
+    const enrichedTracksJson = JSON.stringify(enrichedTracks);
+    const performanceJsonStr = JSON.stringify(performance);
     const update: Record<string, unknown> = {
-      enrichedTracksJson: JSON.stringify(enrichedTracks),
-      distanceM: aggregates.distanceM,
-      minElevationM: aggregates.minElevationM,
-      maxElevationM: aggregates.maxElevationM,
-      totalAscentM: aggregates.totalAscentM,
-      totalDescentM: aggregates.totalDescentM,
-      averageGradePct: aggregates.averageGradePct,
-      performanceJson: JSON.stringify(performance),
+      enrichedTracksJson,
+      performanceJson: performanceJsonStr,
     };
-    await pb.collection(COLLECTION).update(recordId, update);
+    const numericFields: Array<[key: string, value: number]> = [
+      ["distanceM", aggregates.distanceM],
+      ["minElevationM", aggregates.minElevationM],
+      ["maxElevationM", aggregates.maxElevationM],
+      ["totalAscentM", aggregates.totalAscentM],
+      ["totalDescentM", aggregates.totalDescentM],
+      ["averageGradePct", aggregates.averageGradePct],
+    ];
+    for (const [key, value] of numericFields) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        update[key] = value;
+      }
+    }
+    try {
+      await pb.collection(COLLECTION).update(recordId, update);
+    } catch (updateErr: unknown) {
+      const err = updateErr as { response?: { data?: unknown }; data?: unknown };
+      const detail = err?.response?.data ?? err?.data;
+      const detailStr = detail != null ? ` ${JSON.stringify(detail)}` : "";
+      demLog(`PocketBase update failed: ${updateErr instanceof Error ? updateErr.message : String(updateErr)}${detailStr}`);
+      if (enrichedTracksJson.length > 9_000_000) {
+        demLog(`enrichedTracksJson length: ${enrichedTracksJson.length} (max 10_000_000)`);
+      }
+      throw updateErr;
+    }
     await writeProgress({
       currentPhase: "saving",
       currentPhasePercent: 80,
