@@ -373,3 +373,69 @@ This keeps the rest of the application (enrichment pipeline, progress polling, U
 5. Implement enrichment_jobs data access in SQL; replace every PB enrichment_jobs access (checkpoint module) with the new layer; pass DB client instead of pb.
 6. Remove PocketBase from the app (deps, env, apps/pb); test full flow (upload, enrich, progress, cancel, delete, startup resume).
 7. Optional: remove or replace events; add user-creation script or admin.
+
+---
+
+## 12. Recommended Stack for PostgreSQL Migration
+
+Context: **Next.js 16**, **React 19**, **TypeScript**, **Leaflet + ECharts**, **server-side enrichment jobs**. No existing data; fresh PostgreSQL.
+
+### 12.1 PostgreSQL access layer
+
+**Recommendation: Drizzle ORM**
+
+- **Why:** The app uses a small, well-defined set of tables (users, gpx_files, enrichment_jobs) and straightforward operations (CRUD, filtered list, get-one). Drizzle is a thin, type-safe layer: you write SQL-like queries in TypeScript and get strong types from the schema. It fits the “persistence abstraction” approach without ORM magic or N+1 risk.
+- **Fit:** Server-only usage (API routes, server components) matches Drizzle’s design. Existing TypeScript types (e.g. `GpxFileRecord`, enrichment job shape) map cleanly to Drizzle schema definitions. No need for Prisma’s broader feature set or the boilerplate of raw `pg` plus manual mapping.
+- **Alternatives:** Prisma is viable if you prefer its migration and Studio UX; raw `pg` is minimal but increases boilerplate and type-safety work.
+
+### 12.2 Authentication
+
+**Recommendation: Lucia**
+
+- **Why:** The current model is email/password, a single cookie, and `getCurrentUserId(request)` used everywhere. Lucia is built for “you own the user table” and session-in-database (or cookie-based sessions). It gives a small, explicit API for validate session → user, login, logout, and fits Next.js App Router without pulling in OAuth or a heavy framework.
+- **Fit:** You already plan a `users` table in PostgreSQL; Lucia stores sessions in a table and uses an httpOnly cookie. That replaces PocketBase’s cookie and keeps the same mental model: one cookie, resolve to user id on the server. No separate auth service.
+- **Alternatives:** Auth.js (NextAuth) is the common Next.js choice; use it if you want the Credentials provider and might add OAuth later. A minimal custom layer (sessions table + `jose` for signing + `bcrypt` for passwords) is also fine and keeps dependencies minimal.
+
+### 12.3 File storage
+
+**Recommendation: Filesystem first; optional S3-compatible later**
+
+- **Why:** GPX files are per-user, uploaded and then read by the same app (enrichment + map). A single writable directory (e.g. `UPLOAD_DIR` or `./data/gpx`) is enough for one instance and keeps the stack simple. Store only the relative path (or filename key) in `gpx_files.file_path`; no DB BLOBs.
+- **Fit:** Aligns with the assessment’s “filesystem for minimal change.” No new runtime dependency; Node `fs` (or `fs/promises`) in the upload route and in the file-serving route. If you later need multi-instance or durability, swap to S3-compatible storage (e.g. S3, R2, MinIO) and change only the read/write helpers; the rest of the app still uses `file_path` / key.
+- **Tooling:** No dedicated file-storage library required. Optional: `@aws-sdk/client-s3` when you add object storage; use a single abstraction (e.g. `getFileStream(recordId, path)` / `writeFile(recordId, stream)`) so callers stay agnostic.
+
+### 12.4 Migrations
+
+**Recommendation: Drizzle Kit**
+
+- **Why:** If Drizzle is the access layer, Drizzle Kit is the natural choice: the same schema (defined in code) drives both queries and migrations. You get versioned SQL (or JS) migrations and a single source of truth; no separate schema file to keep in sync.
+- **Fit:** Small schema (three to four tables); migrations run on deploy or in a pre-start script. Fits the “empty DB” assumption: first run applies all migrations and you’re ready. No need for a second tool (e.g. node-pg-migrate) unless you prefer hand-written SQL only.
+
+### 12.5 Background job persistence
+
+**Recommendation: PostgreSQL only (existing enrichment_jobs table)**
+
+- **Why:** “Background” work today is in-process (run after response + instrumentation resume). Job state is already the `enrichment_jobs` table: create checkpoint, update progress, mark completed/failed/cancelled. There is no separate queue or worker pool; the same Next.js process reads/writes the table and runs the enrichment loop.
+- **Fit:** Keep that model. PostgreSQL is the single source of truth for job state; no Redis or external job queue unless you later need retries, backoff, or multi-worker scaling. The persistence layer (Drizzle) reads and updates `enrichment_jobs`; the runner stays as-is.
+
+### 12.6 Developer tooling
+
+**Recommendation:**
+
+- **Database UI:** **Drizzle Studio** (if using Drizzle). It introspects the same schema and DB, so you can browse tables and run ad-hoc queries without leaving the stack. Alternatives: TablePlus, pgAdmin, or any PostgreSQL client.
+- **Local PostgreSQL:** **Docker Compose** with a `postgres` service and a volume. Gives a consistent version and one-command start for all developers; document in README and optional `docker-compose.yml` in the repo.
+- **Environment:** **`.env.example`** with `DATABASE_URL`, `UPLOAD_DIR`, session secret, and any auth-related vars. No extra tooling required; optional `direnv` for local overrides.
+- **Optional:** A small **seed script** (e.g. Drizzle or raw SQL) to create one test user so developers can log in without touching PocketBase.
+
+### 12.7 Stack summary
+
+| Concern | Recommendation | Rationale |
+|--------|----------------|-----------|
+| PostgreSQL access | Drizzle | Type-safe, thin, schema-as-code; fits small table set and server-only usage. |
+| Authentication | Lucia | Own user table + DB sessions; matches current cookie + getCurrentUserId model. |
+| File storage | Filesystem (then optional S3) | Simplest for single-instance; path in DB; easy to swap to object storage later. |
+| Migrations | Drizzle Kit | Same schema as Drizzle; versioned migrations, one tool. |
+| Background job persistence | PostgreSQL (enrichment_jobs) | No extra queue; keep current in-process runner and checkpoint table. |
+| Developer tooling | Drizzle Studio + Docker Compose + .env.example | Consistent local DB, schema-aware UI, documented env. |
+
+This stack keeps the existing architecture (Next.js API, server-side enrichment, Leaflet/ECharts) intact and replaces only the data layer, auth, and file storage with a small set of focused tools that fit the project’s scale and patterns.
