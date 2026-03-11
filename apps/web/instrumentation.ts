@@ -1,6 +1,7 @@
 /**
  * Runs once per Node.js process when the Next.js server starts.
  * Resumes incomplete enrichment jobs so they survive server kill/restart.
+ * Skip when a dedicated enrichment worker is used (set DISABLE_WEB_ENRICHMENT_RESUME or ENABLE_ENRICHMENT_WORKER).
  */
 
 let startupResumeDone = false;
@@ -9,6 +10,13 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   if (startupResumeDone) return;
   startupResumeDone = true;
+
+  if (
+    process.env.DISABLE_WEB_ENRICHMENT_RESUME === "true" ||
+    process.env.ENABLE_ENRICHMENT_WORKER === "true"
+  ) {
+    return;
+  }
 
   void (async () => {
     try {

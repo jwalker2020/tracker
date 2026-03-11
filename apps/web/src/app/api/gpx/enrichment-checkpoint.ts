@@ -385,6 +385,19 @@ export async function getIncompleteEnrichmentJobs(
 }
 
 /**
+ * Return one claimable job for the worker, or null. Claimable = running or resumable.
+ * Caller must claim by calling updateJobProgress(..., { status: "running" }, job.id) then run the executor.
+ * Only one worker process should run when using this (no Redis/lock); set DISABLE_WEB_ENRICHMENT_RESUME
+ * on the web app when a dedicated worker is used.
+ */
+export async function getNextClaimableJob(
+  pb: PocketBase
+): Promise<EnrichmentCheckpointRecord | null> {
+  const jobs = await getIncompleteEnrichmentJobs(pb);
+  return jobs[0] ?? null;
+}
+
+/**
  * For the given record IDs, return map of recordId -> jobId for those that have an active (running/resumable) job.
  * Optionally filter by userId so only the current user's jobs are returned.
  */
