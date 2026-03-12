@@ -11,12 +11,12 @@ export type DisplayGeometry = {
 
 /**
  * Get display geometry for a GPX file record. Uses enrichedGeoJson when present and valid;
- * otherwise fetches the stored GPX file and parses it. Returns empty tracks on any error.
+ * otherwise fetches the stored GPX file via same-origin API and parses it. Returns empty tracks on any error.
  * Single place for "how we get track coordinates for the map" to avoid duplicating parsing.
+ * Browser calls only the Next.js route; no direct PocketBase access.
  */
 export async function getDisplayGeometry(
-  record: GpxRecordForGeometry,
-  baseUrl: string
+  record: GpxRecordForGeometry
 ): Promise<DisplayGeometry> {
   if (record.enrichedGeoJson?.trim()) {
     try {
@@ -54,8 +54,8 @@ export async function getDisplayGeometry(
   }
 
   try {
-    const url = `${baseUrl}/api/files/gpx_files/${record.id}/${record.file}`;
-    const res = await fetch(url);
+    const url = `/api/gpx/files/${record.id}/file`;
+    const res = await fetch(url, { credentials: "include" });
     if (!res.ok) return { tracks: [] };
     const gpxText = await res.text();
     const parsed = parseGpx(gpxText);

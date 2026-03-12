@@ -28,11 +28,10 @@ const MapView = dynamic(() => import("@/components/maps/MapView").then((m) => ({
 
 type GpxViewProps = {
   initialFiles: GpxFileRecordForDisplay[];
-  baseUrl: string;
   initialError?: string;
 };
 
-export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
+export function GpxView({ initialFiles, initialError }: GpxViewProps) {
   const [files, setFiles] = useState<GpxFileRecordForDisplay[]>(initialFiles);
   const [orderedFileIds, setOrderedFileIds] = useState<string[]>(() =>
     initialFiles.map((f) => f.id)
@@ -429,7 +428,6 @@ export function GpxView({ initialFiles, baseUrl, initialError }: GpxViewProps) {
       </aside>
       <div className="min-w-0 flex-1">
         <MapView
-          baseUrl={baseUrl}
           files={selectedFiles}
           visibleTrackKeys={totalTracks > 0 ? visibleTrackKeys : null}
           fitToSelectionTrigger={fitToSelectionTrigger}

@@ -50,7 +50,6 @@ export default async function GpxPage() {
       ) : userId ? (
         <GpxView
           initialFiles={initialFiles}
-          baseUrl={PB_URL}
           initialError={initialError}
         />
       ) : (

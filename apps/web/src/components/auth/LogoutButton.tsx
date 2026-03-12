@@ -1,18 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import pb from "@/lib/pocketbase";
 
 /**
- * Clears PocketBase auth and the auth cookie, then refreshes so the server sees unauthenticated state.
+ * Calls the logout API to clear the auth cookie, then refreshes so the server sees unauthenticated state.
+ * No direct PocketBase access from the browser.
  */
 export function LogoutButton() {
   const router = useRouter();
 
-  function handleLogout() {
-    pb.authStore.clear();
-    // Remove auth cookie so server no longer sees a user.
-    document.cookie = "pb_auth=; Max-Age=0; path=/";
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     router.refresh();
   }
 

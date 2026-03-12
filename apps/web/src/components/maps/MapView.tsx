@@ -35,7 +35,6 @@ const FALLBACK_TILE_URL =
 const FALLBACK_ATTRIBUTION = "© OpenStreetMap contributors";
 
 type MapViewProps = {
-  baseUrl: string;
   files: GpxFileRecordForDisplay[];
   /** When provided, only tracks whose key (fileId-trackIndex) is in this set are shown. Omit or null = show all. */
   visibleTrackKeys?: Set<string> | null;
@@ -381,13 +380,11 @@ function MapToChartSync({
 }
 
 function GpxOverlay({
-  baseUrl,
   files,
   visibleTrackKeys,
   selectedTrack,
   setSelectedTrack,
 }: {
-  baseUrl: string;
   files: GpxFileRecordForDisplay[];
   visibleTrackKeys: Set<string> | null | undefined;
   selectedTrack: SelectedTrack | null;
@@ -418,7 +415,7 @@ function GpxOverlay({
       for (const rec of files) {
         if (cancelled || !overlay) return;
         const color = rec.color || "#3b82f6";
-        const { tracks } = await getDisplayGeometry(rec, baseUrl);
+        const { tracks } = await getDisplayGeometry(rec);
         if (cancelled || !overlay) return;
         tracks.forEach((track, trackIndex) => {
           const key = `${rec.id}-${trackIndex}`;
@@ -452,7 +449,7 @@ function GpxOverlay({
       cancelled = true;
       map.off("click", onMapClick);
     };
-  }, [map, baseUrl, files, visibleTrackKeys, setSelectedTrack]);
+  }, [map, files, visibleTrackKeys, setSelectedTrack]);
 
   useEffect(() => {
     for (const ref of trackLayersRef.current) {
@@ -581,7 +578,6 @@ function parseProfileJson(json: string | null): ProfilePoint[] | null {
 }
 
 export function MapView({
-  baseUrl,
   files: filesProp,
   visibleTrackKeys = null,
   fitToSelectionTrigger = 0,
@@ -647,11 +643,11 @@ export function MapView({
   }, [selectedTrack]);
 
   useEffect(() => {
-    if (!selectedTrack || !baseUrl) return;
+    if (!selectedTrack) return;
     const file = files.find((f) => f.id === selectedTrack.fileId);
     if (!file) return;
     let cancelled = false;
-    getDisplayGeometry(file, baseUrl).then(({ tracks }) => {
+    getDisplayGeometry(file).then(({ tracks }) => {
       if (cancelled) return;
       const track = tracks[selectedTrack.trackIndex];
       setSelectedTrackPoints(track?.points && track.points.length >= 2 ? track.points : null);
@@ -659,7 +655,7 @@ export function MapView({
     return () => {
       cancelled = true;
     };
-  }, [baseUrl, files, selectedTrack]);
+  }, [files, selectedTrack]);
 
   const selectedProfile = useMemo(() => {
     if (!selectedTrack) return null;
@@ -753,7 +749,6 @@ export function MapView({
           <ParcelOverlay enabled={parcelsEnabled} />
           {/* GpxOverlay and MapHoverMarker render above parcel layer so track click/hover work. */}
           <GpxOverlay
-            baseUrl={baseUrl}
             files={files}
             visibleTrackKeys={visibleTrackKeys}
             selectedTrack={selectedTrack}
