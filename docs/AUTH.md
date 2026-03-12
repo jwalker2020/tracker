@@ -1,6 +1,6 @@
 # Auth (PocketBase)
 
-The web app uses PocketBase for auth. Log in on the GPX page to upload, list, enrich, and delete files as that user.
+The web app uses PocketBase for auth. Log in on the GPX page to upload, list, enrich, and delete files as that user. Async enrichment runs in a separate worker process; the web app creates jobs and returns `jobId`; progress and cancel are PocketBase-backed.
 
 ## Create a user
 
@@ -22,4 +22,4 @@ If login fails, the form shows a short message. Common causes: wrong email/passw
 ## Technical notes
 
 - **Server:** Login is handled by `POST /api/auth/login`, which authenticates with PocketBase and sets the auth cookie via `Set-Cookie`. All API routes (list, upload, enrich, progress, cancel, delete) read the user from the request cookie via `getCurrentUserId(request)`.
-- **Optional:** `GUEST_USER_ID` in env is only an optional dev fallback when no cookie is present; do not rely on it for normal use.
+- **Optional:** `GUEST_USER_ID` in env is a **dev-only** fallback when no cookie is present; not for production.

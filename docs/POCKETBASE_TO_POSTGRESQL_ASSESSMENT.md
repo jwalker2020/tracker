@@ -436,7 +436,7 @@ Context: **Next.js 16**, **React 19**, **TypeScript**, **Leaflet + ECharts**, **
 | Authentication | Lucia | Own user table + DB sessions; matches current cookie + getCurrentUserId model. |
 | File storage | Filesystem (then optional S3) | Simplest for single-instance; path in DB; easy to swap to object storage later. |
 | Migrations | Drizzle Kit | Same schema as Drizzle; versioned migrations, one tool. |
-| Background job persistence | PostgreSQL (enrichment_jobs) | No extra queue; keep current in-process runner and checkpoint table. |
+| Background job persistence | PostgreSQL (enrichment_jobs) | No extra queue; keep worker and runEnrichmentJob; checkpoint table. |
 | Developer tooling | Drizzle Studio + Docker Compose + .env.example | Consistent local DB, schema-aware UI, documented env. |
 
 This stack keeps the existing architecture (Next.js API, server-side enrichment, Leaflet/ECharts) intact and replaces only the data layer, auth, and file storage with a small set of focused tools that fit the project’s scale and patterns.

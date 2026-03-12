@@ -45,7 +45,7 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 - **`PATCH /api/gpx/files`** – Reorder files (ownership checked per record).
 - **`POST /api/gpx/upload`** – Upload GPX; creates `gpx_files` record with current user as owner.
 - **`DELETE /api/gpx/files/[id]`** – Delete file; verifies owner, cancels any active enrichment for that file.
-- **`POST /api/gpx/enrich`** – Start enrichment (sync or async). Optional `DEM_BASE_PATH`; when unset, enrichment uses GPX elevation only.
+- **`POST /api/gpx/enrich`** – Start enrichment (sync or async). When `DEM_BASE_PATH` is unset, **GPX-only enrichment** (elevation from GPX `<ele>` only).
 - **`GET /api/gpx/enrichment-progress?jobId=...`** – Poll progress for a job; returns status, phase, percent; ownership checked via job’s `userId`.
 - **`POST /api/gpx/enrichment-cancel`** – Cancel a running job; body includes `recordId`; ownership verified against the GPX record.
 
@@ -54,8 +54,8 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 ## GPX enrichment pipeline
 
 - **Entry**: `POST /api/gpx/enrich` (sync or async). Async jobs are run by a **separate worker process** (`pnpm run enrichment-worker`); the web app creates the job and returns `jobId`; the worker polls for claimable jobs and runs `runEnrichmentJob`.
-- **Parsing**: Server-side `extractTracks()` (in `lib/dem/gpx-extract`) parses GPX XML: per `<trk>`/`<rte>`, collects `<trkpt>`/`<rtept>` with lat, lon, and optional `<ele>` (namespace-safe for GPX 1.1). Geometry is always GPX lat/lon.
-- **Elevation source**: If a point has valid GPX `<ele>`, that value is used and DEM is not sampled for it. DEM is used only for points missing or invalid elevation (and only when `DEM_BASE_PATH` is set). If `DEM_BASE_PATH` is unset, enrichment runs in a **GPX-only** mode: no DEM; elevation and metrics come from GPX geometry and `<ele>` only.
+- **Parsing**: Server-side `extractTracks()` (in `lib/dem/gpx-extract`) parses GPX XML: per `<trk>`/`<rte>`, collects `<trkpt>`/`<rtept>` with lat, lon, and optional `<ele>`. **Parser behavior**: standard `getElementsByTagName("ele")` (and `"name"`) first; only when that returns no element does the code fall back to **local-name matching** (so namespaced GPX 1.1 e.g. Strava works). **Geometry**: GPX lat/lon is always authoritative for positions; DEM affects only elevation, not coordinates.
+- **Elevation source priority**: (1) **GPX `<ele>`** — used when present and valid (finite number). (2) **DEM sampling** — only when GPX elevation is missing or invalid, and `DEM_BASE_PATH` is set and the point is in DEM extent. (3) **Missing** — otherwise the point has no elevation; stats aggregate over valid points only. When `DEM_BASE_PATH` is unset, **GPX-only enrichment**: no DEM tile reads; elevation and metrics from GPX geometry and `<ele>` only.
 - **Per-track flow**: Each track is enriched separately. With DEM: optional resampling at fixed spacing, cumulative distance along line, DEM sampling for points without GPX ele, smoothing, then elevation stats and profile. GPX-only: cumulative distance along raw points (zero-length segments handled), GPX elevation, same stats/profile pipeline.
 - **Output**: Per-track summary (distance, min/max elevation, ascent/descent, average/max grade, curviness, elevation profile JSON) and file-level aggregates; written to `gpx_files` (and optionally checkpoint for resume).
 - **Duplicate / zero-distance**: Cumulative distance uses segment length (duplicate consecutive points add 0). Stats and max-grade logic skip zero or tiny segments; curviness uses collapsed duplicate points for turn-angle computation.
@@ -64,10 +64,10 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 
 ## Progress / cancel model
 
-- **Enrichment jobs** are stored in PocketBase (`enrichment_jobs`): one record per job, keyed by `jobId`, linked to `recordId` (GPX file) and `userId` (owner).
-- **Progress**: Background runner calls `updateJobProgress()` at a throttled cadence with processed points, total points, phase, and overall percent. Clients poll **`GET /api/gpx/enrichment-progress?jobId=...`**; response is restricted to the current user’s job (`userId` must match).
-- **Cancel**: Client calls **`POST /api/gpx/enrichment-cancel`** with `recordId`. Server verifies the GPX record is owned by the current user, then marks the job’s status as `cancelled`. The running enrichment checks `isCancelled()` periodically and exits cleanly.
-- **Resume**: The **enrichment worker** polls for incomplete jobs (running/resumable) and runs `runEnrichmentJob` for each; progress and checkpoint records are used so work can continue. The web app does not run or resume enrichment.
+- **Enrichment jobs** are stored in PocketBase (`enrichment_jobs`): one record per job, keyed by `jobId`, linked to `recordId` (GPX file) and `userId` (owner). Progress and cancel state are **PocketBase-backed**; no in-memory store.
+- **Progress**: The **enrichment worker** (not the web app) calls `updateJobProgress()` at a throttled cadence. Clients poll **`GET /api/gpx/enrichment-progress?jobId=...`**; the API returns data from the job record; access is restricted to the job owner (`userId`).
+- **Cancel**: Client calls **`POST /api/gpx/enrichment-cancel`** with `recordId`. Server verifies the GPX record is owned by the current user, then marks the job’s status as `cancelled`. The worker’s `runEnrichmentJob` checks `isCancelled()` periodically and exits cleanly.
+- **Resume**: The worker polls for claimable/incomplete jobs and runs `runEnrichmentJob` for each; the web app never runs or resumes enrichment.
 
 ---
 
@@ -97,9 +97,10 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 
 ## Deployment assumptions
 
-- **PocketBase** runs as a separate process; its URL is set via **`NEXT_PUBLIC_PB_URL`** (e.g. `http://localhost:8090` or production URL). The Next.js app uses this for API calls and auth cookie domain.
-- **Optional DEM**: **`DEM_BASE_PATH`** (and optionally **`DEM_MANIFEST_PATH`**) configure server-side DEM tile location. If unset, enrichment still runs using GPX elevation only; no DEM tiles are loaded.
-- **Enrichment worker**: Run the worker separately (`pnpm run enrichment-worker` from `apps/web`). It polls for claimable jobs and runs one at a time. Progress and cancel are stored in PocketBase so the UI can poll and request cancel; the worker checks for cancellation during the run.
+- **PocketBase** runs as a separate process; its URL is set via **`NEXT_PUBLIC_PB_URL`**. The Next.js app and the enrichment worker both use this URL for API calls; the web app also uses it for auth cookie domain.
+- **Optional DEM**: **`DEM_BASE_PATH`** (and optionally **`DEM_MANIFEST_PATH`**) configure server-side DEM tile location. If unset, **GPX-only enrichment** runs: no DEM tiles; elevation and metrics from GPX geometry and `<ele>` only.
+- **Enrichment worker**: Run separately (`pnpm run enrichment-worker` from `apps/web`). **Worker responsibilities**: poll for claimable jobs, claim one, run `runEnrichmentJob` (load GPX, DEM/GPX elevation, write progress/checkpoint, complete or fail). **Web responsibilities**: create/locate job on enrich request, return `jobId`; serve progress and cancel APIs from PocketBase. Progress and cancel state are stored in PocketBase; the worker checks for cancellation during the run.
+- **File serving**: GPX file bytes are served by PocketBase at **`{NEXT_PUBLIC_PB_URL}/api/files/gpx_files/{recordId}/{fileName}`**. The web app (e.g. geometry API) and the worker both fetch GPX via this URL when they need the file body.
 
 ---
 

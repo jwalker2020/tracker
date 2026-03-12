@@ -1,6 +1,6 @@
 # External Review Summary: Recent Changes
 
-**Impact:** These changes make GPX enrichment more robust: files with existing elevation (e.g. Strava exports) now enrich correctly with or without DEM; chart hover behavior is simplified (no crosshair or floating label); and project documentation is updated for external reviewers.
+**Impact:** Enrichment now works with or without DEM (GPX-only mode when DEM is unset), GPX `<ele>` is used when present so DEM sampling is skipped where possible, and chart hover is simplified (vertical crosshair and floating label removed; tooltips kept). Async enrichment runs in a separate worker process; the web app only creates jobs and returns `jobId`. Documentation is aligned with the current worker-based architecture and reviewer needs.
 
 ---
 
@@ -16,16 +16,19 @@ Enrichment no longer requires DEM to be configured. When `DEM_BASE_PATH` is unse
 3. **Missing** — if neither source supplies a value, the point has no elevation (stats aggregate over valid points only).
 
 **Parser behavior**  
-The GPX parser falls back to **local-name matching** when the standard tag lookup returns no element. In GPX 1.1 documents with a default namespace (e.g. Strava), `getElementsByTagName("ele")` and `getElementsByTagName("name")` can return nothing; the code then looks for the first child of the trackpoint with local name `ele`, or of the track/route with local name `name`. This allows `<ele>` and `<name>` to be read correctly for namespaced GPX 1.1 without changing behavior for non-namespaced or legacy GPX.
+The parser uses **local-name matching only when the standard lookup returns no result**: it first uses `getElementsByTagName("ele")` / `getElementsByTagName("name")`; if that returns no element (e.g. GPX 1.1 default namespace), it then looks for the first child with that local name. Non-namespaced and legacy GPX are unchanged.
 
 **2. Chart hover and layout**  
-On the elevation, curviness, and grade charts (ECharts), the **axis/crosshair-style vertical hover line** and the **custom floating metric label** were removed. **Tooltips remain:** the axis tooltip still appears when hovering over the chart. The grade chart (bottom of the stack) was given extra bottom grid padding and a small panel padding so it is no longer clipped.
+On the elevation, curviness, and grade charts (ECharts), the **ECharts axis/crosshair-style vertical hover line** and the **custom floating metric label** were removed. **Tooltips remain:** the axis tooltip still appears when hovering over the chart. The grade chart (bottom of the stack) was given extra bottom grid padding and a small panel padding so it is no longer clipped.
 
 **Performance**  
 GPX-only enrichment avoids DEM tile loading and raster sampling. For tracks that already have elevation, enrichment is faster when DEM is not configured; when DEM is configured, points with valid GPX elevation skip DEM sampling, reducing I/O and compute.
 
-**3. Documentation**  
-`PROJECT_CONTEXT.md` was rewritten for external readers (purpose, stack, modules, API, enrichment pipeline, progress/cancel, chart–map interaction, filtering, auth, deployment). `CURRENT_STATE.md` was added to capture recent changes, fragile areas, workarounds, pending refactors, and suggested next tasks.
+**3. Enrichment architecture**  
+Async enrichment runs only in a **separate worker process** (`pnpm run enrichment-worker`). The web app creates or locates the job and returns `jobId`; the worker polls for claimable jobs and runs **runEnrichmentJob**. Progress and cancel state are **PocketBase-backed**; the web app does not run or resume enrichment.
+
+**4. Documentation**  
+`PROJECT_CONTEXT.md`, `CURRENT_STATE.md`, and this summary are kept in sync with the worker-based architecture, elevation source priority, and reviewer clarity (purpose, stack, modules, API, enrichment pipeline, progress/cancel, chart–map, filtering, auth, deployment, limitations).
 
 ---
 
@@ -34,15 +37,15 @@ GPX-only enrichment avoids DEM tile loading and raster sampling. For tracks that
 | Area | Files |
 |------|--------|
 | DEM / GPX pipeline | `apps/web/src/lib/dem/enrich-elevation.ts`, `apps/web/src/lib/dem/gpx-extract.ts` |
-| Enrich API & runner | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/lib/enrichment/runEnrichmentJob.ts`, `apps/web/src/lib/enrichment/workerLoop.ts` |
+| Enrich API & worker | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/lib/enrichment/runEnrichmentJob.ts`, `apps/web/src/lib/enrichment/workerLoop.ts` |
 | Charts | `apps/web/src/components/gpx/TrackElevationProfile.tsx`, `TrackCurvinessProfile.tsx`, `TrackGradeProfile.tsx`, `TrackProfilePanel.tsx` |
-| Docs | `PROJECT_CONTEXT.md`, `CURRENT_STATE.md` |
+| Docs | `PROJECT_CONTEXT.md`, `CURRENT_STATE.md`, `EXTERNAL_REVIEW_SUMMARY.md` |
 
 ---
 
 ## Why the Change Was Made
 
-Users were uploading GPX files that already contained lat, lon, and elevation (e.g. from Strava). Previously, enrichment was **skipped entirely** when `DEM_BASE_PATH` was unset, and when DEM was set the pipeline did not **consistently prefer** existing GPX `<ele>` over DEM sampling, so tracks with good in-file elevation could still be sampled from DEM or fail to enrich as expected. The goal was to support full enrichment from GPX elevation alone, to always prefer GPX elevation over DEM when present and valid, and to handle namespaced GPX 1.1 and duplicate/zero-distance points without errors. The chart changes reduce visual clutter on hover while keeping tooltips; the grade chart fix addresses layout clipping at the bottom of the profile stack.
+Users uploaded GPX files with lat, lon, and elevation (e.g. Strava). Previously, enrichment was **skipped entirely** when `DEM_BASE_PATH` was unset, and when DEM was set the pipeline did not **prefer** GPX `<ele>` over DEM, so in-file elevation was sometimes overwritten or enrichment failed. Changes: (1) support **GPX-only enrichment** when DEM is unset; (2) use **GPX `<ele>` first**, DEM only for missing/invalid elevation when DEM is configured; (3) handle namespaced GPX 1.1 (local-name fallback when standard lookup fails) and **duplicate consecutive points** / **zero-distance segments** without errors. Chart changes remove the vertical crosshair and floating label to reduce clutter while keeping tooltips; grade chart padding fixes bottom clipping.
 
 ---
 
@@ -50,8 +53,8 @@ Users were uploading GPX files that already contained lat, lon, and elevation (e
 
 - **No DEM, no GPX elevation**: If a file has no `<ele>` and DEM is not configured, enrichment still runs but all elevation samples are “missing”; the API may return a warning and not persist elevation stats. This is intended; the only change is that enrichment is no longer skipped entirely when DEM is unset.
 - **Chart hover**: Removing the vertical crosshair line and floating metric label could affect anyone who relied on that exact visual; tooltip content and behavior are unchanged.
-- **Duplicate points**: Duplicate consecutive points add zero distance and are accounted for in cumulative distance and stats. Smoothing and derived metrics (e.g. grade, curviness) operate on the same point series as before; the change is that duplicates no longer cause errors. In edge cases, many duplicates could slightly affect median-smoothed elevation or curviness because the point count in the series is unchanged; this is accepted and not considered a functional regression.
-- **Namespace fallback**: The local-name fallback is used only when the standard `getElementsByTagName` lookup returns no element. It could in theory match an element from a different namespace with the same local name; in practice GPX 1.1 track data uses a single namespace for `<ele>` and `<name>`, so the risk is low and the change is additive for namespaced documents.
+- **Duplicate points**: Duplicate consecutive points add zero distance and are accounted for in cumulative distance and stats. The change is that duplicates no longer cause errors. In edge cases, many duplicates could slightly affect smoothed or derived metrics (e.g. median-smoothed elevation, curviness) because the point count in the series is unchanged; accepted and not considered a functional regression.
+- **Namespace fallback**: Local-name fallback is **additive** and used only when the standard lookup fails. It could in theory match an element from another namespace with the same local name; in practice GPX 1.1 track data uses a single namespace for `<ele>` and `<name>`, so risk is low.
 
 ---
 
@@ -70,22 +73,31 @@ Validated scenarios (consistent with the implemented changes):
 
 ## Backward Compatibility
 
-- **enrichedTracksJson** remains the primary per-track data shape; the pipeline writes it and the UI reads it. No schema change.
-- **elevationProfileJson** (legacy single combined profile) is unchanged and still supported for display when present; the app prefers enrichedTracksJson when available.
+- **enrichedTracksJson** is the primary per-track data shape; the pipeline writes it and the UI reads it. No schema change.
+- **elevationProfileJson** (legacy) is unchanged and still supported for display when present; the app prefers enrichedTracksJson when available.
 
 ---
 
 ## Known Limitations
 
 - GPX elevation is assumed to be in **meters** (per GPX 1.1); no detection or conversion for feet.
-- Enrichment runs in a separate worker process (`pnpm run enrichment-worker`); the web app creates jobs and the worker runs them. Resume is handled by the worker polling for incomplete jobs.
-- Very large tracks can produce a large `enrichedTracksJson`; storage and response size limits (e.g. PocketBase) are unchanged and may still apply.
-- Progress and checkpoint writes are best-effort; failures are logged but do not stop enrichment.
+- **Worker-based enrichment**: Async jobs run only in the enrichment worker; the web app creates jobs and returns `jobId`. Progress and cancel are PocketBase-backed; partial file-level resume is not implemented.
+- Very large tracks can produce large **enrichedTracksJson**; PocketBase storage and response limits may still apply.
+- Progress and checkpoint writes are **best-effort**; failures are logged but do not stop enrichment.
+- **Guest auth**: `GUEST_USER_ID` is dev-only; not for production.
 
 ---
 
 ## Future Improvements
 
-- Remove or formally deprecate legacy **elevationProfileJson** once all consumers rely on enrichedTracksJson.
-- Consolidate or clearly document the dual enrichment paths (legacy to-GeoJSON in `lib/gpx/enrich.ts` vs per-track DEM/GPX pipeline in `lib/dem/enrich-elevation.ts`).
-- Add checkpoint-based partial resume so that if the server process stops mid-enrichment, the next run can resume from the last persisted checkpoint per track instead of restarting the full file.
+- Deprecate or remove legacy **elevationProfileJson** once all consumers use **enrichedTracksJson**.
+- Consolidate dual enrichment paths (`lib/gpx/enrich.ts` vs `lib/dem/enrich-elevation.ts`) or document which flows use which.
+- Implement **partial resume** from checkpoint so the worker can resume from the last persisted checkpoint per track after a crash instead of restarting the full file.
+- Large-track handling: downsampling or capping profile points for storage to avoid PocketBase limits.
+
+---
+
+## Safety Guarantees
+
+- **GPX lat/lon is authoritative** for geometry; DEM affects **only elevation**, not coordinates.
+- Elevation source order: GPX `<ele>` (when valid) → DEM (when configured and available) → missing.
