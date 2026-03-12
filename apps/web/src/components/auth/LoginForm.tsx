@@ -41,8 +41,7 @@ export function LoginForm() {
     <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-6">
       <h2 className="mb-4 text-lg font-semibold text-slate-100">Log in</h2>
       <p className="mb-4 text-sm text-slate-400">
-        Use a PocketBase user (Admin → Auth &amp; Users). Create one with email + password; turn on
-        &quot;verified&quot; for that user if login is denied.
+        In PocketBase Admin: <strong>Collections</strong> → open <strong>users</strong> → <strong>New record</strong>. Set email and password, turn <strong>verified</strong> on, then save. Use that email and password here.
       </p>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>

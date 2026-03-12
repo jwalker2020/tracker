@@ -46,6 +46,7 @@ function isNoData(value: number, nodata: number | null): boolean {
  */
 export class DemRasterSampler {
   private openTiles = new Map<string, OpenTile>();
+  private readErrorPaths = new Set<string>();
   private basePath: string;
 
   constructor(basePath: string) {
@@ -115,6 +116,7 @@ export class DemRasterSampler {
       height,
       nodata,
       toProjected,
+      scratchLonLat: [0, 0],
     };
     this.openTiles.set(path, open);
     return open;
@@ -152,17 +154,31 @@ export class DemRasterSampler {
       return { elevationM: null };
     }
 
-    const window = [ix, iy, ix + 1, iy + 1] as [number, number, number, number];
-    const rasters = await tile.image.readRasters({
-      window,
-      samples: [0],
-      interleave: false,
-    });
-    const band = rasters[0];
-    if (!band || band.length === 0) return { elevationM: null };
-    const value = Number(band[0]);
-    if (isNoData(value, nodata)) return { elevationM: null };
-    return { elevationM: Number.isFinite(value) ? value : null };
+    try {
+      const window = [ix, iy, ix + 1, iy + 1] as [number, number, number, number];
+      const rasters = await tile.image.readRasters({
+        window,
+        samples: [0],
+        interleave: false,
+      });
+      const band = rasters[0];
+      if (!band || band.length === 0) return { elevationM: null };
+      const value = Number(band[0]);
+      if (isNoData(value, nodata)) return { elevationM: null };
+      return { elevationM: Number.isFinite(value) ? value : null };
+    } catch (err) {
+      // Some GeoTIFFs (e.g. compressed USGS) can trigger RangeError / buffer bounds in geotiff.js
+      const path = tile.meta.path;
+      if (!this.readErrorPaths.has(path)) {
+        this.readErrorPaths.add(path);
+        console.warn(
+          "[DEM] Tile read error (treating as nodata):",
+          path,
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+      return { elevationM: null };
+    }
   }
 
   /**

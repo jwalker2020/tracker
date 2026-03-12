@@ -10,6 +10,16 @@ import { getPocketBaseUrl } from "@/lib/pocketbase";
 /** Headers-like object for cookie extraction (e.g. Request.headers or next/headers()). */
 type HeadersLike = { get(name: string): string | null };
 
+/** Extract pb_auth from Cookie header (default key used by exportToCookie). */
+function getPbAuthFromCookieHeader(cookieHeader: string): string {
+  const key = "pb_auth=";
+  const parts = cookieHeader.split(";").map((p) => p.trim());
+  for (const part of parts) {
+    if (part.startsWith(key)) return part;
+  }
+  return "";
+}
+
 function parseUserIdFromCookie(cookieHeader: string): Promise<string | null> {
   let url: string;
   try {
@@ -18,7 +28,8 @@ function parseUserIdFromCookie(cookieHeader: string): Promise<string | null> {
     return Promise.resolve(null);
   }
   const pb = new PocketBase(url);
-  pb.authStore.loadFromCookie(cookieHeader);
+  const pbAuth = getPbAuthFromCookieHeader(cookieHeader);
+  pb.authStore.loadFromCookie(pbAuth || cookieHeader);
   return Promise.resolve(pb.authStore.model?.id ?? null);
 }
 

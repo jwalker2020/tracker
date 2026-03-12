@@ -1,0 +1,52 @@
+# Local Docker stack: web (public), worker, pocketbase (internal-only).
+# Cloudflare Tunnel should point only at web (e.g. https://tracker.nhwalker.net -> web:3000).
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tracker-web:latest
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_PB_URL: http://pocketbase:8090
+      DEM_BASE_PATH: /data/dem/nh
+      DEM_MANIFEST_PATH: manifest.json
+    volumes:
+      - ./tools/dem/data/dem:/data/dem:ro
+    depends_on:
+      pocketbase:
+        condition: service_started
+    command: ["pnpm", "start"]
+    restart: unless-stopped
+
+  worker:
+    image: tracker-web:latest
+    environment:
+      NEXT_PUBLIC_PB_URL: http://pocketbase:8090
+      DEM_BASE_PATH: /data/dem/nh
+      DEM_MANIFEST_PATH: manifest.json
+    volumes:
+      - ./tools/dem/data/dem:/data/dem:ro
+    depends_on:
+      pocketbase:
+        condition: service_started
+    command: ["node", "--import", "tsx", "scripts/enrichment-worker.ts"]
+    restart: unless-stopped
+
+  pocketbase:
+    build:
+      context: ./apps/pb
+      dockerfile: Dockerfile
+    image: tracker-pocketbase:latest
+    volumes:
+      - pb_data:/app/pb_data
+    # Internal only: do not expose ports to host in production.
+    # For local admin over WireGuard/localhost, uncomment:
+    ports:
+      - "8090:8090"
+    restart: unless-stopped
+
+volumes:
+  pb_data:

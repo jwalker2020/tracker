@@ -92,8 +92,9 @@ export function formatParcelPopupContent(
     const acres = (attrs.SHAPE__Area / 43560).toFixed(2);
     lines.push(`<strong>Acreage</strong>: ${acres} ac`);
   }
-  const landUseCode = attrs.slu || attrs.sluc;
-  if (landUseCode) lines.push(`<strong>Land use code</strong>: ${escapeHtml(landUseCode)}`);
+  const landUseCode = attrs.slu ?? attrs.sluc;
+  if (landUseCode != null && landUseCode !== "")
+    lines.push(`<strong>Land use code</strong>: ${escapeHtml(String(landUseCode))}`);
   if (cama?.sluc_desc) lines.push(`<strong>Land use description</strong>: ${escapeHtml(cama.sluc_desc)}`);
   if (lines.length === 0) return "No attributes available.";
   return lines.join("<br/>");

@@ -1,0 +1,37 @@
+# Dependencies and build outputs (provided by Docker stages)
+**/node_modules
+**/.next
+**/.pnpm
+.pnpm-store
+
+# Local env and secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Git and IDE
+.git
+.gitignore
+.cursor
+*.md
+!apps/pb/README.md
+
+# PocketBase (built separately; not needed in app image)
+apps/pb
+
+# Data and tools (not needed in app image; data/ and tools/ can be 10GB+)
+data
+tools
+# GeoTIFF/zips often in tools/dem or ./dem - exclude from context
+*.tif
+*.tiff
+*.zip
+
+# Caches and build artifacts
+.turbo
+dist
+build
+coverage
+*.log
+.DS_Store

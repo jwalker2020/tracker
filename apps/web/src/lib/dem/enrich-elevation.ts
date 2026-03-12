@@ -158,8 +158,12 @@ export async function enrichGpxWithDem(
   gpxText: string,
   config: DemEnrichmentConfig
 ): Promise<ElevationEnrichmentResult> {
+  const demBasePath = config.demBasePath?.trim();
+  if (!demBasePath) {
+    throw new Error("demBasePath is required for enrichGpxWithDem");
+  }
   const index = await loadTileIndex({
-    demBasePath: config.demBasePath,
+    demBasePath,
     manifestPath: config.manifestPath,
   });
   return enrichGpxWithDemFromIndex(gpxText, index, {
@@ -491,7 +495,7 @@ export async function enrichSingleTrackFromIndex(
   try {
     for (let chunkStart = startIndex; chunkStart < totalPoints; chunkStart += CHUNK_SIZE) {
       const c = options?.isCancelled?.();
-      const cancelledThisChunk = typeof c?.then === "function" ? await c : c;
+      const cancelledThisChunk = await Promise.resolve(c);
       if (cancelledThisChunk) {
         cancelled = true;
         break;
@@ -503,7 +507,7 @@ export async function enrichSingleTrackFromIndex(
       for (let i = chunkStart; i < chunkEnd; i++) {
         if ((i - chunkStart) % 500 === 0 && i > chunkStart) {
           const c = options?.isCancelled?.();
-          const cancelledNow = typeof c?.then === "function" ? await c : c;
+          const cancelledNow = await Promise.resolve(c);
           if (cancelledNow) {
             cancelled = true;
             break;
@@ -517,9 +521,14 @@ export async function enrichSingleTrackFromIndex(
           typeof rawEle === "number" && Number.isFinite(rawEle);
         let value: number | null = hasValidEle ? (rawEle as number) : null;
         if (!hasValidEle) {
-          const [w, s, e, n] = lastUsedTile?.meta.bbox ?? [0, 0, 0, 0];
-          const inLast = lastUsedTile != null && lng >= w && lng <= e && lat >= s && lat <= n;
-          const tile = inLast ? lastUsedTile : findTileContainingPoint(openTiles, lng, lat);
+          const bbox: [number, number, number, number] =
+            lastUsedTile?.meta.bbox ?? [0, 0, 0, 0];
+          const [w, s, e, n] = bbox;
+          const inLast: boolean =
+            lastUsedTile != null && lng >= w && lng <= e && lat >= s && lat <= n;
+          const tile: OpenTileT | null = inLast
+            ? lastUsedTile
+            : findTileContainingPoint(openTiles, lng, lat);
           if (tile) {
             const sample = await sampler.sample(tile, lng, lat);
             if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
@@ -988,7 +997,7 @@ export async function enrichGpxWithDemPerTrack(
     const enrichedTracks: EnrichedTrackSummary[] = [];
     for (let i = 0; i < tracks.length; i++) {
       const c = config.isCancelled?.();
-      const cancelled = typeof c?.then === "function" ? await c : c;
+      const cancelled = await Promise.resolve(c);
       if (cancelled) throw new Error("ENRICHMENT_CANCELLED");
       const track = tracks[i]!;
       const result = enrichSingleTrackGpxOnly(track.points, track.bounds);
@@ -1039,7 +1048,7 @@ export async function enrichGpxWithDemPerTrack(
   try {
     for (let i = 0; i < tracks.length; i++) {
       const c = config.isCancelled?.();
-      const cancelled = typeof c?.then === "function" ? await c : c;
+      const cancelled = await Promise.resolve(c);
       if (cancelled) {
         throw new Error("ENRICHMENT_CANCELLED");
       }

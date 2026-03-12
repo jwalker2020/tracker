@@ -46,12 +46,18 @@ export async function POST(request: Request) {
         { status: 401 }
       );
     }
+    if (lower.includes("not find") || lower.includes("404") || lower.includes("collection")) {
+      return NextResponse.json(
+        { error: "PocketBase users auth collection missing. In Admin: Collections → create Auth collection named users, add a user, set verified." },
+        { status: 401 }
+      );
+    }
     return NextResponse.json({ error: msg || "Login failed." }, { status: 401 });
   }
 
   // Server sets the cookie so the browser stores it and sends it on every request.
   const cookieStr = pb.authStore.exportToCookie({ httpOnly: false, path: "/", secure: false });
   const res = NextResponse.json({ ok: true });
-  res.headers.set("Set-Cookie", cookieStr);
+  res.headers.set("Set-Cookie", cookieStr + "; SameSite=Lax");
   return res;
 }
