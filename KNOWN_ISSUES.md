@@ -1,6 +1,6 @@
 # Known Issues
 
-This file tracks known bugs, limitations, and operational concerns so maintainers and reviewers can quickly see current risk areas without rediscovering them.
+This file tracks known bugs, limitations, and operational concerns so maintainers and reviewers can quickly see current risk areas without rediscovering them. When an issue listed here is fixed, remove it from this file and reference the fix in commit or release notes.
 
 Last updated: 2025-03-10
 
@@ -15,7 +15,7 @@ Last updated: 2025-03-10
 - **Very large tracks can exceed PocketBase limits**
   - `enrichedTracksJson` can become very large for very long tracks.
   - PocketBase request/field size limits may cause save failures.
-  - The worker logs warnings when payload length approaches ~10M characters after an update failure.
+  - The worker logs warnings when payload size approaches ~10M characters after a failed save attempt.
 
 - **GPX elevation units**
   - GPX elevation is assumed to be in meters (per GPX 1.1); there is no detection or conversion for feet.
@@ -25,8 +25,8 @@ Last updated: 2025-03-10
 ## Performance / Scalability
 
 - **Large enrichedTracksJson payloads**
-  - Large tracks increase response size for list/API endpoints that return file records (e.g. `/api/gpx/files`).
-  - May slow page load and client-side parsing.
+  - File-record responses (e.g. `GET /api/gpx/files`) include `enrichedTracksJson`, so large tracks increase payload size.
+  - This can slow page load and client-side parsing.
 
 - **Single job per worker process**
   - The enrichment worker runs one job at a time per process.
@@ -43,6 +43,10 @@ Last updated: 2025-03-10
 - **Worker must be running for async enrichment**
   - Async enrichment depends on the enrichment worker (`pnpm run enrichment-worker` from `apps/web`).
   - If the worker is not running, async jobs remain pending.
+
+- **Worker restart does not partially resume jobs**
+  - If the enrichment worker crashes or is restarted mid-job, the job currently restarts from the beginning.
+  - Checkpoint state exists, but partial resume from the last processed point or track is not implemented.
 
 - **Guest auth is dev-only**
   - `GUEST_USER_ID` is a dev fallback when no login cookie is present; it is not for production use.
