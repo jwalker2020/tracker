@@ -88,3 +88,16 @@ Elevation enrichment reads DEM GeoTIFF tiles from **local disk**. Suggested setu
 **Security:** Keep `DEM_BASE_PATH` server-only (do not prefix with `NEXT_PUBLIC_`). Only the API route uses it. Restrict filesystem access to that directory if needed.
 
 **Manifest:** Put a `manifest.json` in the DEM folder listing each tile’s `path`, `bbox` (WGS84), `crs`, and optional `nodata`. See `apps/web/src/lib/dem/README.md` for the format.
+
+### Enrichment worker (async elevation jobs)
+
+Async elevation enrichment runs in a **separate worker process**, not inside the Next.js server. The web app creates jobs (e.g. when you choose “Enrich” and async is used) and returns a `jobId`; the worker picks up jobs and runs the DEM pipeline.
+
+From the repo root:
+
+```bash
+cd apps/web
+pnpm run enrichment-worker
+```
+
+The worker loads env from `apps/web/.env.local` (or `NEXT_PUBLIC_PB_URL` and DEM vars from the environment). Run one worker per process; it processes one job at a time and polls for the next. For production, run the worker as a separate service (e.g. systemd unit or second container) so jobs continue even when the web app restarts.

@@ -27,7 +27,7 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 - **`apps/web/src/lib`** – Core logic:
   - **`dem/`** – GPX extraction (`gpx-extract`), DEM tile index, raster sampling, elevation enrichment (per-track and GPX-only), elevation stats, curviness/grade helpers.
   - **`gpx/`** – Parse, enrich (legacy to-GeoJSON path), geometry fetch, file records, validation.
-  - **`enrichment/`** – Background enrichment runner (calls DEM lib, writes progress/cancel to PocketBase).
+  - **`enrichment/`** – Job executor (`runEnrichmentJob`) and worker loop; worker process polls for jobs and runs enrichment (calls DEM lib, writes progress/cancel to PocketBase).
   - **`auth`** – Get current user from PocketBase cookie (or optional `GUEST_USER_ID` for dev).
   - **`maps/`** – Basemap/hillshade config, overlays.
   - **`units`** – Meter ↔ feet for display.
@@ -53,7 +53,7 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 
 ## GPX enrichment pipeline
 
-- **Entry**: `POST /api/gpx/enrich` (sync or async) or background resume from `instrumentation.ts` on server startup.
+- **Entry**: `POST /api/gpx/enrich` (sync or async). Async jobs are run by a **separate worker process** (`pnpm run enrichment-worker`); the web app creates the job and returns `jobId`; the worker polls for claimable jobs and runs `runEnrichmentJob`.
 - **Parsing**: Server-side `extractTracks()` (in `lib/dem/gpx-extract`) parses GPX XML: per `<trk>`/`<rte>`, collects `<trkpt>`/`<rtept>` with lat, lon, and optional `<ele>` (namespace-safe for GPX 1.1). Geometry is always GPX lat/lon.
 - **Elevation source**: If a point has valid GPX `<ele>`, that value is used and DEM is not sampled for it. DEM is used only for points missing or invalid elevation (and only when `DEM_BASE_PATH` is set). If `DEM_BASE_PATH` is unset, enrichment runs in a **GPX-only** mode: no DEM; elevation and metrics come from GPX geometry and `<ele>` only.
 - **Per-track flow**: Each track is enriched separately. With DEM: optional resampling at fixed spacing, cumulative distance along line, DEM sampling for points without GPX ele, smoothing, then elevation stats and profile. GPX-only: cumulative distance along raw points (zero-length segments handled), GPX elevation, same stats/profile pipeline.
@@ -67,7 +67,7 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 - **Enrichment jobs** are stored in PocketBase (`enrichment_jobs`): one record per job, keyed by `jobId`, linked to `recordId` (GPX file) and `userId` (owner).
 - **Progress**: Background runner calls `updateJobProgress()` at a throttled cadence with processed points, total points, phase, and overall percent. Clients poll **`GET /api/gpx/enrichment-progress?jobId=...`**; response is restricted to the current user’s job (`userId` must match).
 - **Cancel**: Client calls **`POST /api/gpx/enrichment-cancel`** with `recordId`. Server verifies the GPX record is owned by the current user, then marks the job’s status as `cancelled`. The running enrichment checks `isCancelled()` periodically and exits cleanly.
-- **Resume**: On Next.js server startup, `instrumentation.ts` finds incomplete jobs (running/resumable) and re-invokes the background runner for each; progress and checkpoint records are used so work can continue.
+- **Resume**: The **enrichment worker** polls for incomplete jobs (running/resumable) and runs `runEnrichmentJob` for each; progress and checkpoint records are used so work can continue. The web app does not run or resume enrichment.
 
 ---
 
@@ -99,8 +99,7 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 
 - **PocketBase** runs as a separate process; its URL is set via **`NEXT_PUBLIC_PB_URL`** (e.g. `http://localhost:8090` or production URL). The Next.js app uses this for API calls and auth cookie domain.
 - **Optional DEM**: **`DEM_BASE_PATH`** (and optionally **`DEM_MANIFEST_PATH`**) configure server-side DEM tile location. If unset, enrichment still runs using GPX elevation only; no DEM tiles are loaded.
-- **Server restart**: Incomplete enrichment jobs are resumed on Next.js Node.js server startup via **`instrumentation.ts`** (resumable jobs are re-queued to the background runner).
-- **Single process**: Background enrichment runs in the same Node process as the app; no separate worker queue. Progress and cancel are stored in PocketBase so the UI can poll and request cancel regardless of which instance is running the job.
+- **Enrichment worker**: Run the worker separately (`pnpm run enrichment-worker` from `apps/web`). It polls for claimable jobs and runs one at a time. Progress and cancel are stored in PocketBase so the UI can poll and request cancel; the worker checks for cancellation during the run.
 
 ---
 

@@ -34,7 +34,7 @@ GPX-only enrichment avoids DEM tile loading and raster sampling. For tracks that
 | Area | Files |
 |------|--------|
 | DEM / GPX pipeline | `apps/web/src/lib/dem/enrich-elevation.ts`, `apps/web/src/lib/dem/gpx-extract.ts` |
-| Enrich API & runner | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/lib/enrichment/runEnrichment.ts` |
+| Enrich API & runner | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/lib/enrichment/runEnrichmentJob.ts`, `apps/web/src/lib/enrichment/workerLoop.ts` |
 | Charts | `apps/web/src/components/gpx/TrackElevationProfile.tsx`, `TrackCurvinessProfile.tsx`, `TrackGradeProfile.tsx`, `TrackProfilePanel.tsx` |
 | Docs | `PROJECT_CONTEXT.md`, `CURRENT_STATE.md` |
 
@@ -78,7 +78,7 @@ Validated scenarios (consistent with the implemented changes):
 ## Known Limitations
 
 - GPX elevation is assumed to be in **meters** (per GPX 1.1); no detection or conversion for feet.
-- Enrichment is single-process; background jobs run in the Next.js server and resume only on process restart via instrumentation.
+- Enrichment runs in a separate worker process (`pnpm run enrichment-worker`); the web app creates jobs and the worker runs them. Resume is handled by the worker polling for incomplete jobs.
 - Very large tracks can produce a large `enrichedTracksJson`; storage and response size limits (e.g. PocketBase) are unchanged and may still apply.
 - Progress and checkpoint writes are best-effort; failures are logged but do not stop enrichment.
 

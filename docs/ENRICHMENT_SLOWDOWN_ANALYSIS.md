@@ -2,21 +2,22 @@
 
 **Scope:** Analysis only. No code changes. Goal: make the web app more performant and responsive while enrichment jobs are active.
 
+**Current architecture (as of worker rollout):** Async enrichment runs in a **separate worker process** (`pnpm run enrichment-worker`). The web app only creates jobs and returns `jobId`; the worker polls for claimable jobs and runs `runEnrichmentJob`. So the web app no longer runs enrichment in-process; the causes and recommendations below still apply if the worker shares a machine with the web app or if considering further optimizations.
+
 ---
 
 ## 1. Most Likely Causes of the Slowdown
 
-### 1.1 Enrichment running in the same Next.js process (HIGH)
+### 1.1 Enrichment running in the same Next.js process (HIGH) — *addressed by worker*
 
-- **Where:** `runEnrichmentInBackground` is invoked from `POST /api/gpx/enrich` (after the response is sent) and from `instrumentation.ts` on startup. It runs in the same Node.js process as the Next.js server.
-- **What it does:** CPU-heavy DEM elevation sampling (`enrichGpxWithDemPerTrack`), GPX parsing, and repeated PocketBase reads/writes. All of this shares the single event loop with API handlers.
-- **Effect:** While the enrichment loop is running (especially during the long “enrichment” phase), the event loop is busy. Incoming requests (progress polling, any other API call, or even React server components on navigation) are delayed until the loop yields. This is the **single most likely cause** of the app feeling slow during enrichment.
+- **Previously:** `runEnrichmentInBackground` was invoked from `POST /api/gpx/enrich` and from `instrumentation.ts` on startup, in the same Node.js process as the Next.js server.
+- **Now:** Enrichment runs in a separate worker process (`runEnrichmentJob` in `workerLoop.ts`). The web app no longer runs or resumes jobs. If the worker and web share one machine, CPU from the worker can still affect the host; otherwise this cause is addressed.
 
 ### 1.2 API route contention (HIGH)
 
 - **Progress reads:** `GET /api/gpx/enrichment-progress` is polled every **1 second** by `EnrichmentProgressIcon` (in `GpxFileList`) per active job, and every **5 seconds** by `GpxUploadForm` when `enrichmentJobId` is set. Each request: `getCurrentUserId(request)` (cookie parse + PocketBase auth load) and `getJobByJobId(pb, jobId)` (PocketBase `getList` on `enrichment_jobs`).
-- **Progress writes:** The background runner calls `updateJobProgress` every **1.5 seconds** (throttled in `runEnrichment.ts`: `PROGRESS_WRITE_THROTTLE_MS = 1_500`). Each write is a PocketBase `update` on the checkpoint record.
-- **Effect:** Progress reads and writes compete with each other and with the enrichment loop for the same process and the same PocketBase instance. Under load, progress requests can queue and feel slow; the enrichment task can also be delayed by progress I/O.
+- **Progress writes:** The worker’s `runEnrichmentJob` calls `updateJobProgress` every **1.5 seconds** (throttled in `runEnrichmentJob.ts`: `PROGRESS_WRITE_THROTTLE_MS = 1_500`). Each write is a PocketBase `update` on the checkpoint record.
+- **Effect:** Progress reads (web) and progress writes (worker) no longer share the same process. They still share PocketBase; under load, progress requests can queue if PocketBase or the network is busy.
 
 ### 1.3 Progress polling frequency (MEDIUM)
 
@@ -50,7 +51,7 @@
 
 ### 1.8 Large JSON serialization/deserialization (MEDIUM)
 
-- **Server:** `gpxRecordToDisplay` parses `enrichedTracksJson` (and nested `elevationProfileJson`) for **every** file when building the list. The runEnrichment final update does `JSON.stringify(enrichedTracks)` (potentially millions of points) and sends it in one PocketBase `update`. Code already logs when `enrichedTracksJson.length > 9_000_000`.
+- **Server:** `gpxRecordToDisplay` parses `enrichedTracksJson` (and nested `elevationProfileJson`) for **every** file when building the list. The worker’s `runEnrichmentJob` final update does `JSON.stringify(enrichedTracks)` (potentially millions of points) and sends it in one PocketBase `update`. Code already logs when `enrichedTracksJson.length > 9_000_000`.
 - **Client:** Receives the full list JSON; React and Leaflet then work with the resulting objects. No per-progress-tick large parse; the cost is concentrated in the file-list response and the final gpx_files update.
 - **Effect:** Large serialization/deserialization adds to the cost of refetch and of the final save, and can briefly tie up the event loop and PocketBase.
 
@@ -70,13 +71,13 @@
 
 ### 3.1 Architecture changes
 
-- **Run enrichment in a separate context:** Use a Node.js **worker thread** or a **separate long-running process** (e.g. small Node script or job worker) that pulls work from a queue or DB and runs `runEnrichmentInBackground` (or equivalent). The Next.js app only creates checkpoint records and returns `jobId`; the worker does DEM work and progress updates. This removes enrichment from the main server event loop and is the highest-leverage change.
+- **Run enrichment in a separate context:** **Implemented.** A separate worker process (`pnpm run enrichment-worker`) polls for claimable jobs and runs `runEnrichmentJob`. The Next.js app only creates checkpoint records and returns `jobId`; the worker does DEM work and progress updates. This removes enrichment from the web app event loop.
 - **Optional job queue:** Introduce a lightweight queue (e.g. in-memory + persistence in PostgreSQL/Redis) so that only one worker (or a bounded pool) runs enrichment. Reduces risk of multiple heavy jobs on one machine and makes progress writes more predictable.
 - **Keep progress and file list APIs lightweight:** Progress API should only read one small record (job status + progress fields). File list API should either return list-only (no enrichedTracks) or a separate “file details” endpoint for map/chart data when a file is selected.
 
 ### 3.2 Backend / API changes
 
-- **Increase progress write throttle:** Raise `PROGRESS_WRITE_THROTTLE_MS` from 1.5 s to 2.5–3 s, or write only when `overallPercentComplete` or `currentPhase` changes by a meaningful delta (e.g. ≥ 2–3%). Reduces write frequency without materially affecting UX.
+- **Increase progress write throttle:** In `runEnrichmentJob.ts`, raise `PROGRESS_WRITE_THROTTLE_MS` from 1.5 s to 2.5–3 s, or write only when `overallPercentComplete` or `currentPhase` changes by a meaningful delta (e.g. ≥ 2–3%). Reduces write frequency without materially affecting UX.
 - **Lightweight progress endpoint:** Ensure `GET /api/gpx/enrichment-progress` does a single, minimal read (e.g. by jobId only, select only needed fields). Already close; avoid any extra list or full-record fetch.
 - **List endpoint without heavy JSON:** Add a “list” variant of `GET /api/gpx/files` that returns only fields needed for the sidebar (id, name, color, sortOrder, activeEnrichmentJobId, maybe bounds/center). Load full `enrichedTracks` (or geometry) only when needed (e.g. when file is selected or when opening map). Reduces initial load and refetch cost.
 - **Avoid parsing enrichedTracksJson on every list request:** If the list response must include per-file summary, consider storing a small “summary” field (e.g. track count, total distance) and only parse full JSON when serving a single file or map data.
@@ -159,7 +160,7 @@
 
 ### Phase 3: Larger architectural improvements
 
-- **Run enrichment in a worker thread or separate process:** Extract `runEnrichmentInBackground` (and DEM logic) into a worker or a small Node runner that reads checkpoint/job state from the DB and writes progress back. Next.js only enqueues the job and serves progress reads. This is the main architectural fix for “app slow during enrichment.”
+- **Run enrichment in a worker thread or separate process:** **Done.** The enrichment worker (`workerLoop.ts` + `runEnrichmentJob.ts`) runs as a separate process; Next.js only creates jobs and serves progress reads. This is the main architectural fix for “app slow during enrichment.”
 - **Optional job queue:** Use a simple queue (e.g. DB-backed or Redis) so at most one (or a fixed number of) enrichment job(s) run per instance; progress API and other routes stay responsive.
 - **Optional SSE/WebSocket for progress:** One connection that pushes progress for active job(s). Removes polling and can improve perceived latency.
 

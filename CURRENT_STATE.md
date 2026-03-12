@@ -23,8 +23,8 @@ Concise status for maintainers and contributors. Update as the project evolves.
 
 - **Checkpoint / progress**: Depends on PocketBase collection `enrichment_jobs` and correct schema. If migrations were not run, checkpoint lookup can throw; enrich route logs “run migrations?” and continues without resume.
 - **RangeFilter**: Drag state is kept in refs and a tick to avoid parent re-renders resetting handles; subtle if parent state or bounds change during drag.
-- **Background enrichment**: Single Node process; no queue. If the process dies, jobs are only resumed on next startup via `instrumentation.ts`. Progress/checkpoint writes are best-effort (log and continue on failure).
-- **Large payloads**: `enrichedTracksJson` is stored on `gpx_files`. Very long tracks can approach or exceed PocketBase field/request limits; runEnrichment logs when JSON length is near ~10M chars after an update failure.
+- **Background enrichment**: Async enrichment runs in a **separate worker process** (`pnpm run enrichment-worker`). The web app only creates jobs and returns `jobId`; the worker polls for claimable jobs and runs `runEnrichmentJob`. Progress/checkpoint writes are best-effort (log and continue on failure).
+- **Large payloads**: `enrichedTracksJson` is stored on `gpx_files`. Very long tracks can approach or exceed PocketBase field/request limits; `runEnrichmentJob` logs when JSON length is near ~10M chars after an update failure.
 
 ---
 

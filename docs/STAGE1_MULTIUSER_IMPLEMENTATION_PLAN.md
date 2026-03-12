@@ -1,6 +1,6 @@
 # Stage 1: Multi-User Safety & Shared Progress — Implementation Plan
 
-**Constraints:** Single server only; no worker_threads; no external queue; enrichment stays in Next.js process. Goal: correctness and multi-user safety first. **No code changes in this document — analysis and planning only.**
+**Constraints:** Single server only; no external queue. Async enrichment runs in a **separate worker process** (`pnpm run enrichment-worker`); the web app only creates jobs and returns `jobId`. Goal: correctness and multi-user safety first. **No code changes in this document — analysis and planning only.**
 
 ---
 
@@ -111,17 +111,15 @@ Optional but useful for UI: `currentTrackIndex`, `totalTracks` (numbers). These 
 
 ### 3.3 Enrich API
 
-- **Current:** `apps/web/src/app/api/gpx/enrich/route.ts` — POST body `{ id, async }`. Creates/resumes checkpoint, calls `createCheckpointRecord` or uses `getResumableCheckpoint`, uses in-memory `createJob`, `setProgress`, `registerJobForRecord`, then `void runEnrichmentInBackground(...)`.
-- **Change:**  
+- **Current:** `apps/web/src/app/api/gpx/enrich/route.ts` — POST body `{ id, async }`. For async: creates or locates checkpoint via `createCheckpointRecord` / `getResumableCheckpoint`, updates progress fields as needed, returns `{ ok: true, jobId, resumed }`. It does **not** run enrichment in-process; a separate worker process polls for claimable jobs and runs `runEnrichmentJob(pb, jobId)` from `apps/web/src/lib/enrichment/runEnrichmentJob.ts`. Progress is read/written via `enrichment_jobs`; the worker uses `updateJobProgress` and checkpoint helpers in `enrichment-checkpoint.ts`.
+- **Change (Stage 1):**  
   - Require auth; get `currentUserId`.  
   - Load GPX record by `id`; if not found return 404; if `record.user !== currentUserId` return 403.  
   - When creating checkpoint, pass `userId` into `createCheckpointRecord` and persist it.  
-  - Replace in-memory job creation with “ensure one enrichment_jobs row” (create or get resumable); that row’s `id` and `jobId` are the job identity.  
-  - Replace all `setProgress(jobId, ...)` with updating the same `enrichment_jobs` record (new helper e.g. `updateJobProgress(pb, jobIdOrRecordId, update)` that writes `overallPercentComplete`, `currentPhase`, `currentPhasePercent`, `processedPoints`, `totalPoints`, `status`, `error`, `updatedAt`, `lastHeartbeatAt`).  
-  - Remove `registerJobForRecord` / `unregisterJobForRecord`; no in-memory map.  
-  - `isCancelled()` already uses PocketBase via `getCheckpointByRecordId`; keep that, remove in-memory `getProgress(jobId)?.status === "cancelled"` and rely on checkpoint status.  
-  - Progress logging in `startProgressLogging` must read progress from PocketBase (or a thin getter that reads from PB by jobId) instead of `getProgress(jobId)`.
-- **Files:** `apps/web/src/app/api/gpx/enrich/route.ts` (auth, ownership, replace store with PB progress updates, remove store imports); `apps/web/src/app/api/gpx/enrichment-checkpoint.ts` (add `userId` to create, add progress fields to create/update; optional new `updateJobProgress` there or in a small progress module).
+  - No in-memory job store; job identity is the `enrichment_jobs` row (create or get resumable).  
+  - Worker already updates progress via `updateJobProgress`; ensure `userId` is on the job so progress API can enforce ownership.  
+  - Cancellation is persisted in PocketBase; worker checks status via checkpoint helpers.
+- **Files:** `apps/web/src/app/api/gpx/enrich/route.ts` (add auth, ownership check, set `userId` on checkpoint); `apps/web/src/app/api/gpx/enrichment-checkpoint.ts` (add `userId` to create; progress fields and `updateJobProgress` already used by worker).
 
 ### 3.4 Progress API
 

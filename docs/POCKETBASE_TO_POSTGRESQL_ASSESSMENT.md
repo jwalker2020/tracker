@@ -37,8 +37,8 @@ No server-side session store; session is the PB auth cookie payload.
 |-------|-----|--------|
 | Create | `pb.collection("gpx_files").create(formData)` with file + metadata (user, name, color, boundsJson, trackCount, etc.) | `apps/web/src/app/api/gpx/upload/route.ts` |
 | List | `pb.collection("gpx_files").getList(1, 500, { filter: \`user = "${userId}"\` })`; then sort by sortOrder, created | `apps/web/src/lib/gpx/files.ts` (`getGpxFilesList`) |
-| Get one | `pb.collection("gpx_files").getOne(id)` | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/app/api/gpx/enrichment-cancel/route.ts`, `apps/web/src/app/api/gpx/files/[id]/route.ts`, `apps/web/src/app/api/gpx/files/route.ts` (PATCH), `apps/web/src/lib/enrichment/runEnrichment.ts` |
-| Update | `pb.collection("gpx_files").update(id, update)` for enrich results, sortOrder, etc. | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/lib/enrichment/runEnrichment.ts`, `apps/web/src/app/api/gpx/files/route.ts` (PATCH reorder) |
+| Get one | `pb.collection("gpx_files").getOne(id)` | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/app/api/gpx/enrichment-cancel/route.ts`, `apps/web/src/app/api/gpx/files/[id]/route.ts`, `apps/web/src/app/api/gpx/files/route.ts` (PATCH), `apps/web/src/lib/enrichment/runEnrichmentJob.ts` |
+| Update | `pb.collection("gpx_files").update(id, update)` for enrich results, sortOrder, etc. | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/lib/enrichment/runEnrichmentJob.ts`, `apps/web/src/app/api/gpx/files/route.ts` (PATCH reorder) |
 | Delete | `pb.collection("gpx_files").delete(id)` after ownership check | `apps/web/src/app/api/gpx/files/[id]/route.ts` |
 
 **Record shape (from code):** id, name, file (filename), user, boundsJson, centerLat, centerLng, trackCount, pointCount, color, distanceM, minElevationM, maxElevationM, totalAscentM, totalDescentM, averageGradePct, enrichedGeoJson, elevationProfileJson, enrichedTracksJson, performanceJson, sortOrder, created, updated. The `file` field is the GPX attachment; PocketBase stores the binary and serves it at `/api/files/gpx_files/:id/:filename`.
@@ -75,7 +75,7 @@ No direct client→PocketBase upload in the current flow; all via Next.js API.
 | Usage | How | Files |
 |-------|-----|--------|
 | URL construction | `getGpxFileUrl(recordId, fileName, baseUrl)` → `${baseUrl}/api/files/${COLLECTION}/${recordId}/${fileName}` | `apps/web/src/lib/gpx/files.ts` |
-| Fetch (server) | Enrich route and runEnrichment fetch GPX body from `NEXT_PUBLIC_PB_URL/api/files/gpx_files/:id/:file` to run enrichment | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/lib/enrichment/runEnrichment.ts` |
+| Fetch (server) | Worker runs runEnrichmentJob and fetches GPX body from `NEXT_PUBLIC_PB_URL/api/files/gpx_files/:id/:file` | `apps/web/src/lib/enrichment/runEnrichmentJob.ts` |
 | Fetch (client) | getDisplayGeometry fetches from same URL when enrichedGeoJson not present (map geometry) | `apps/web/src/lib/gpx/geometry.ts` |
 
 Files are served by **PocketBase** at `/api/files/gpx_files/:recordId/:filename`. The app uses `NEXT_PUBLIC_PB_URL` as base; there is no Next.js proxy for file serving. Browser and Next server both call PocketBase’s file API.
@@ -84,7 +84,7 @@ Files are served by **PocketBase** at `/api/files/gpx_files/:recordId/:filename`
 
 ### 1.7 Progress / checkpoint persistence
 
-All progress and checkpoint state is stored in **enrichment_jobs** (see 1.4). Throttled writes from runEnrichment and enrich route; progress API and cancel read/update the same collection. No in-memory store; PocketBase is the single source of truth. Files: `apps/web/src/app/api/gpx/enrichment-checkpoint.ts`, `apps/web/src/lib/enrichment/runEnrichment.ts`, `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/app/api/gpx/enrichment-progress/route.ts`, `apps/web/src/app/api/gpx/enrichment-cancel/route.ts`, `apps/web/instrumentation.ts` (startup resume).
+All progress and checkpoint state is stored in **enrichment_jobs** (see 1.4). Throttled writes from the enrichment worker (runEnrichmentJob); progress API and cancel read/update the same collection. No in-memory store; PocketBase is the single source of truth. Files: `apps/web/src/app/api/gpx/enrichment-checkpoint.ts`, `apps/web/src/lib/enrichment/runEnrichmentJob.ts`, `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/app/api/gpx/enrichment-progress/route.ts`, `apps/web/src/app/api/gpx/enrichment-cancel/route.ts`, `apps/web/src/lib/enrichment/workerLoop.ts`. The web app does not run or resume jobs; the worker process does.
 
 ---
 
@@ -121,7 +121,8 @@ No client-side `pb.collection(...).getList` or create/update/delete; all data ac
 | `apps/web/src/app/api/gpx/enrichment-cancel/route.ts` | `pb.collection("gpx_files").getOne`; `markCheckpointCancelled(pb, ...)` |
 | `apps/web/src/app/api/gpx/enrichment-progress/route.ts` | `getJobByJobId(pb, ...)` (reads enrichment_jobs) |
 | `apps/web/src/app/api/gpx/enrichment-checkpoint.ts` | All enrichment_jobs create/getList/update (takes `pb` as argument) |
-| `apps/web/src/lib/enrichment/runEnrichment.ts` | `pb.collection("gpx_files").getOne`, `update`; checkpoint create/update/completed/failed; fetch file from PB URL |
+| `apps/web/src/lib/enrichment/runEnrichmentJob.ts` | `pb.collection("gpx_files").getOne`, `update`; checkpoint create/update/completed/failed; fetch file from PB URL (used by worker) |
+| `apps/web/src/lib/enrichment/workerLoop.ts` | Polls for claimable jobs, claims, calls runEnrichmentJob |
 | `apps/web/src/app/gpx/page.tsx` | `getGpxFilesList`, `getActiveEnrichmentJobIdsForRecordIds(pb, recordIds, userId)` |
 | `apps/web/src/lib/events.ts` | `pb.collection("events").getList` (CalendarEvent) — may be legacy/unused in main GPX flow |
 
@@ -226,7 +227,7 @@ No client-side `pb.collection(...).getList` or create/update/delete; all data ac
 - **lib/gpx/files.ts:** `getGpxFilesList` → one SELECT with filter by user_id, sort by sort_order, created; return array. `getGpxFileUrl` → return URL for new file API. No PB.
 - **Upload route:** Parse multipart; validate; write file to disk (or object storage); INSERT into gpx_files (with file_path); return id. No `pb.collection().create(formData)`.
 - **Auth:** New implementation of `getCurrentUserId` (session or JWT); login route verifies password and creates session or issues JWT. Logout clears cookie (and optionally invalidates session).
-- **Enrich route and runEnrichment:** Fetch GPX from new file endpoint (or direct read from disk in server context) instead of PB file URL; gpx_files getOne/update become SQL. Checkpoint helpers receive a DB client instead of `pb`.
+- **Worker and runEnrichmentJob:** Fetch GPX from new file endpoint (or direct read from disk in worker context) instead of PB file URL; gpx_files getOne/update become SQL. Checkpoint helpers receive a DB client instead of `pb`.
 - **Files route (GET list, PATCH reorder), files/[id] (DELETE):** Replace PB getList/getOne/update/delete with SQL. Ownership = WHERE user_id = current_user_id.
 - **Enrichment-progress and enrichment-cancel routes:** Already use checkpoint helpers; only the backend of those helpers changes (PB → PG).
 - **Gpx page (server component):** Still calls `getGpxFilesList(userId)` and `getActiveEnrichmentJobIdsForRecordIds`; implement those against PostgreSQL. Remove `pb` import.
@@ -234,7 +235,7 @@ No client-side `pb.collection(...).getList` or create/update/delete; all data ac
 ### HIGH effort
 
 - **No single module is a full rewrite**, but the **persistence layer as a whole** is: every place that touches `pb` or PocketBase collections must be switched to PostgreSQL + new auth + new file storage. That spans many files (see §1.10). The app logic (enrichment pipeline, progress flow, UI) stays; the data layer is replaced.
-- **Instrumentation (startup resume):** Today it calls `getIncompleteEnrichmentJobs(pb)` and then `runEnrichmentInBackground`. Same API; implementation of `getIncompleteEnrichmentJobs` becomes a SQL query. Effort is medium if the checkpoint module is abstracted, high if done ad hoc in many places.
+- **Worker loop:** Today it calls `getNextClaimableJob(pb)` and then `runEnrichmentJob(pb, jobId)`. Same API; implementation of checkpoint helpers becomes SQL. Effort is medium if the checkpoint module is abstracted, high if done ad hoc in many places. The web app no longer runs or resumes jobs.
 
 ---
 
@@ -300,14 +301,14 @@ This keeps the rest of the application (enrichment pipeline, progress polling, U
 
 4. **gpx_files in PostgreSQL**
    - Implement `getGpxFilesList(userId)` with SELECT and ordering.
-   - Replace every `pb.collection("gpx_files").getOne/getList/update/delete` in API routes and runEnrichment with SQL (or with a thin gpx_files repository that uses SQL). Keep the same TypeScript types for the rest of the app.
+   - Replace every `pb.collection("gpx_files").getOne/getList/update/delete` in API routes and runEnrichmentJob (worker) with SQL (or with a thin gpx_files repository that uses SQL). Keep the same TypeScript types for the rest of the app.
 
 5. **enrichment_jobs in PostgreSQL**
    - Implement all functions in `enrichment-checkpoint.ts` against PostgreSQL (create, get by recordId, get by jobId, update, mark completed/failed/cancelled, list incomplete, active jobs by recordIds). Keep the same exported API so callers do not change.
-   - Pass a DB client (or pool) into these functions instead of `pb`. Update runEnrichment and enrich route to use the new client.
+   - Pass a DB client (or pool) into these functions instead of `pb`. Update runEnrichmentJob (worker) and enrich route to use the new client.
 
 6. **Wire and test**
-   - Ensure upload → enrich → progress → cancel → delete and startup resume all use PostgreSQL and the new file storage.
+   - Ensure upload → enrich → progress → cancel → delete and worker job execution all use PostgreSQL and the new file storage.
    - Remove `pb` from all remaining modules; remove `NEXT_PUBLIC_PB_URL` from app usage (or repurpose for app base URL only).
    - Update docs and env examples.
 
@@ -329,10 +330,10 @@ This keeps the rest of the application (enrichment pipeline, progress polling, U
 | Area | Depends on PB | Files |
 |------|----------------|-------|
 | Auth / session | users + cookie | auth.ts, api/auth/login, LogoutButton, pocketbase.ts |
-| gpx_files CRUD | collection gpx_files | upload/route, gpx/files.ts, gpx/files/route, gpx/files/[id]/route, enrich/route, enrichment-cancel/route, runEnrichment.ts |
-| enrichment_jobs | collection enrichment_jobs | enrichment-checkpoint.ts, enrich/route, enrichment-progress/route, enrichment-cancel/route, runEnrichment.ts, instrumentation.ts |
+| gpx_files CRUD | collection gpx_files | upload/route, gpx/files.ts, gpx/files/route, gpx/files/[id]/route, enrich/route, enrichment-cancel/route, runEnrichmentJob.ts |
+| enrichment_jobs | collection enrichment_jobs | enrichment-checkpoint.ts, enrich/route, enrichment-progress/route, enrichment-cancel/route, runEnrichmentJob.ts, workerLoop.ts |
 | File storage | PB file attachment on create | upload/route |
-| File serving | PB /api/files/... | geometry.ts, enrich/route, runEnrichment.ts, files.ts (getGpxFileUrl) |
+| File serving | PB /api/files/... | geometry.ts, enrich/route (sync), runEnrichmentJob.ts, files.ts (getGpxFileUrl) |
 | Page data | getGpxFilesList + getActiveEnrichmentJobIds | gpx/page.tsx |
 | Optional | events collection | lib/events.ts |
 
@@ -371,7 +372,7 @@ This keeps the rest of the application (enrichment pipeline, progress polling, U
 3. Implement file storage: upload directory (or S3), upload route writes file + INSERT gpx_files, file-serving route (with ownership check) streams file; switch all GPX fetch URLs to new route.
 4. Implement gpx_files data access in SQL; replace every PB gpx_files access with the new layer.
 5. Implement enrichment_jobs data access in SQL; replace every PB enrichment_jobs access (checkpoint module) with the new layer; pass DB client instead of pb.
-6. Remove PocketBase from the app (deps, env, apps/pb); test full flow (upload, enrich, progress, cancel, delete, startup resume).
+6. Remove PocketBase from the app (deps, env, apps/pb); test full flow (upload, enrich, progress, cancel, delete, worker job execution).
 7. Optional: remove or replace events; add user-creation script or admin.
 
 ---
@@ -415,8 +416,8 @@ Context: **Next.js 16**, **React 19**, **TypeScript**, **Leaflet + ECharts**, **
 
 **Recommendation: PostgreSQL only (existing enrichment_jobs table)**
 
-- **Why:** “Background” work today is in-process (run after response + instrumentation resume). Job state is already the `enrichment_jobs` table: create checkpoint, update progress, mark completed/failed/cancelled. There is no separate queue or worker pool; the same Next.js process reads/writes the table and runs the enrichment loop.
-- **Fit:** Keep that model. PostgreSQL is the single source of truth for job state; no Redis or external job queue unless you later need retries, backoff, or multi-worker scaling. The persistence layer (Drizzle) reads and updates `enrichment_jobs`; the runner stays as-is.
+- **Why:** Enrichment runs in a **separate worker process** that polls for claimable jobs and runs `runEnrichmentJob`. Job state is the `enrichment_jobs` table: create checkpoint, update progress, mark completed/failed/cancelled. No Redis or queue; the worker reads/writes the table.
+- **Fit:** Keep that model. PostgreSQL is the single source of truth for job state; no Redis or external job queue unless you later need retries, backoff, or multi-worker scaling. The persistence layer (Drizzle) reads and updates `enrichment_jobs`; the worker and runEnrichmentJob stay as-is.
 
 ### 12.6 Developer tooling
 
