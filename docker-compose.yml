@@ -11,10 +11,10 @@ services:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_PB_URL: http://pocketbase:8090
-      DEM_BASE_PATH: /data/dem/nh
+      DEM_BASE_PATH: /data/dem
       DEM_MANIFEST_PATH: manifest.json
     volumes:
-      - ./tools/dem/data/dem:/data/dem:ro
+      - ./dem-data/output:/data/dem:ro
     depends_on:
       pocketbase:
         condition: service_started
@@ -25,10 +25,10 @@ services:
     image: tracker-web:latest
     environment:
       NEXT_PUBLIC_PB_URL: http://pocketbase:8090
-      DEM_BASE_PATH: /data/dem/nh
+      DEM_BASE_PATH: /data/dem
       DEM_MANIFEST_PATH: manifest.json
     volumes:
-      - ./tools/dem/data/dem:/data/dem:ro
+      - ./dem-data/output:/data/dem:ro
     depends_on:
       pocketbase:
         condition: service_started

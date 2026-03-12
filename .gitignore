@@ -8,3 +8,5 @@ out
 apps/pb/pb_data
 apps/pb/pocketbase*
 data
+dem-data
+tools/dem/data

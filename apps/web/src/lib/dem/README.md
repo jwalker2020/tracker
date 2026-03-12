@@ -2,7 +2,13 @@
 
 Server-side pipeline to sample elevation from local GeoTIFF DEM tiles for GPX tracks and compute elevation stats.
 
-## How to get DEM GeoTIFFs
+## Preparing DEM data (this project)
+
+DEM data for this project is **prepared using the DEM tooling container**. From the repo root run `pnpm dem:docker`; output (processed tiles + `manifest.json`) is written to `dem-data/output`. Point the app at that folder via `DEM_BASE_PATH` and `DEM_MANIFEST_PATH`. See `tools/dem/README.md` and `docs/DEM_DOCKER.md`.
+
+---
+
+## How to get DEM GeoTIFFs (reference)
 
 Free sources (download GeoTIFF format, not just imagery):
 

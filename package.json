@@ -12,6 +12,7 @@
     "lint": "pnpm --filter web lint",
     "dem:manifest": "pnpm -C tools/dem run manifest",
     "dem:download": "pnpm -C tools/dem run download",
-    "dem:setup:nh": "pnpm -C tools/dem run setup-nh"
+    "dem:setup:nh": "pnpm -C tools/dem run setup-nh",
+    "dem:docker": "sh scripts/run-dem-docker.sh"
   }
 }

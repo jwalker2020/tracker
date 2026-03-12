@@ -44,13 +44,12 @@ The worker does **not** use `.env.local`; all env comes from the container (comp
 
 ## Mounting DEM data
 
-To use DEM elevation in Docker:
+DEM data is always prepared with the DEM tooling container. From the repo root run `pnpm dem:docker`; output goes to `./dem-data/output` (processed tiles + `manifest.json`). Then in `docker-compose.yml`, under **web** and **worker**:
 
-1. Create a volume or bind-mount the host folder that contains your DEM tiles and `manifest.json`.
-2. In `docker-compose.yml`, add under **web** and **worker**:
-   - `volumes: - dem_data:/data/dem:ro` (or `- /path/on/host/dem:/data/dem:ro`).
-   - `environment: DEM_BASE_PATH: /data/dem`, `DEM_MANIFEST_PATH: manifest.json`.
-3. Define the volume at the bottom if using a named volume: `dem_data:`.
+- **volumes:** `- ./dem-data/output:/data/dem:ro`
+- **environment:** `DEM_BASE_PATH: /data/dem`, `DEM_MANIFEST_PATH: manifest.json`
+
+See `docs/DEM_DOCKER.md` for the full workflow.
 
 ## Build and run commands
 

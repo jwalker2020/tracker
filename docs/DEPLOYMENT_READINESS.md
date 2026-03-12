@@ -118,7 +118,7 @@ Remaining blockers are **infrastructure**: Docker images, compose (or Coolify se
 | **docker-compose.yml** (or Coolify stack) | Define services: **web** (next start), **worker** (worker entrypoint), **pocketbase** (serve). Shared network. |
 | **PocketBase image** | Use official image or Dockerfile that adds PB binary + `pb_migrations/`; working dir with `pb_data` volume. |
 | **Web/worker command** | Web: `pnpm start` or `next start`. Worker: `node --import tsx scripts/enrichment-worker.ts` (or `node scripts/enrichment-worker.js` if compiled); env from container. |
-| **Volume mounts** | PocketBase: one persistent volume for `pb_data`. Optional: read-only DEM volume at `DEM_BASE_PATH` for web and worker. |
+| **Volume mounts** | PocketBase: one persistent volume for `pb_data`. Optional: read-only DEM volume (prepare with `pnpm dem:docker`; mount `dem-data/output` at `DEM_BASE_PATH` for web and worker). |
 | **Healthchecks** | Web: `GET /` or `GET /api/health` (if added). Worker: optional. PocketBase: optional `GET /api/health` if available. |
 | **Restart policies** | e.g. `unless-stopped` or `on-failure` for web, worker, and PB. |
 
