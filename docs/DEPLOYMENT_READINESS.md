@@ -2,7 +2,7 @@
 
 **Target:** App on local network, Docker + Coolify; public at `https://tracker.nhwalker.net` via Cloudflare Tunnel; PocketBase internal-only; separate enrichment worker.
 
-**Status:** Planning only. Execution order and blocker levels guide what to do first.
+**Status:** Deployment model implemented and documented. See **`docs/PRODUCTION_DEPLOYMENT.md`** and **`docs/deployment.md`** for the approved architecture (web public, worker and PocketBase internal-only, tunnel to web only, admin via LAN/WireGuard). The checklist below remains for validation and reference.
 
 ---
 

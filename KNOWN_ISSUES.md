@@ -41,8 +41,11 @@ Last updated: 2025-03-10
   - The enrich route logs “run migrations?” and continues without resume; progress/resume features may not work correctly.
 
 - **Worker must be running for async enrichment**
-  - Async enrichment depends on the enrichment worker (`pnpm run enrichment-worker` from `apps/web`).
-  - If the worker is not running, async jobs remain pending.
+  - Async enrichment depends on the enrichment worker (`pnpm run enrichment-worker` from `apps/web` locally; in Docker/Coolify, the worker runs as a separate container with the same image).
+  - If the worker is not running, async jobs remain pending. In production, do not expose the worker; it has no HTTP server and must remain internal-only.
+
+- **Production: only web is public**
+  - In Docker Compose / Coolify, only the web service must have a public domain, ingress, or exposed port. Worker and PocketBase are internal-only; PocketBase must never have a public hostname or tunnel. Admin access to PocketBase is via LAN or WireGuard only (see `docs/PRODUCTION_DEPLOYMENT.md`).
 
 - **Worker restart does not partially resume jobs**
   - If the enrichment worker crashes or is restarted mid-job, the job currently restarts from the beginning.

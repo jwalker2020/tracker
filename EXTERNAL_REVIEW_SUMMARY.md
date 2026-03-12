@@ -30,6 +30,11 @@ Async enrichment runs only in a **separate worker process** (`pnpm run enrichmen
 **4. Documentation**  
 `PROJECT_CONTEXT.md`, `CURRENT_STATE.md`, and this summary are kept in sync with the worker-based architecture, elevation source priority, and reviewer clarity (purpose, stack, modules, API, enrichment pipeline, progress/cancel, chart–map, filtering, auth, deployment, limitations).
 
+**5. Production deployment (current approved model)**  
+- **Stack:** Docker Compose / Coolify with three services: **web** (public), **worker** (internal-only), **pocketbase** (internal-only). Same app image for web and worker; PocketBase is a separate image. Internal Docker network `tracker`; only web exposes port 3000.
+- **Public access:** Cloudflare Tunnel points only at the web service (e.g. https://tracker.nhwalker.net → web). PocketBase and worker must never have a public hostname, tunnel, or exposed port.
+- **Config:** `NEXT_PUBLIC_PB_URL=http://pocketbase:8090` for web and worker; browser does not call PocketBase directly (same-origin API). PocketBase data in named volume `pb_data` at `/app/pb_data`. Admin access to PocketBase via LAN or WireGuard only (SSH port-forward or LAN-restricted host port). See `docs/PRODUCTION_DEPLOYMENT.md` and `docs/deployment.md`.
+
 ---
 
 ## Files Changed
