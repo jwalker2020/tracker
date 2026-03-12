@@ -1,33 +1,40 @@
 # Docker Deployment
 
-Run the app (web + worker + PocketBase) with Docker Compose. The same setup is the source of truth for Coolify later.
+Production-ready Docker setup: web, worker, and PocketBase run from **Docker Compose** (source of truth). Same app image runs web and worker; PocketBase is a separate container. The public browser never talks to PocketBase; only web and worker do, over the internal network.
 
-## Quick start
+**Single entry point:** **`docs/deployment.md`** — architecture, internal vs external, env vars, run locally, Coolify, Cloudflare Tunnel, admin access.  
+**Production (Coolify + Tunnel):** **`docs/PRODUCTION_DEPLOYMENT.md`** — production model, traffic flow, checklist.
 
-From the repo root:
+## Quick start (local)
+
+From the **repo root** (tracker):
 
 ```bash
 docker compose build
 docker compose up -d
 ```
 
-- **Web:** http://localhost:3000 (exposed for local testing).
-- **PocketBase:** Internal only (not exposed by default). For local admin or WireGuard access, uncomment `ports: ["8090:8090"]` under `pocketbase` in `docker-compose.yml`.
-- **Worker:** No ports; runs in the background.
+- **Web:** http://localhost:3000 (port 3000 exposed for local testing and for Cloudflare Tunnel).
+- **Worker:** No ports; runs in the background, polls PocketBase for enrichment jobs.
+- **PocketBase:** Internal only (no host ports by default). To reach the admin UI from your machine (e.g. over WireGuard or localhost), uncomment the `ports` block under `pocketbase` in `docker-compose.yml` and run `docker compose up -d` again.
 
-## Service roles
+## Service responsibilities and visibility
 
-| Service   | Role                    | Exposed        | Notes |
-|-----------|-------------------------|----------------|--------|
-| **web**   | Next.js app             | Port 3000      | Public traffic (e.g. via Cloudflare Tunnel) goes here. |
-| **worker**| Enrichment job runner   | No             | Polls PocketBase, runs `runEnrichmentJob`. Same image as web. |
-| **pocketbase** | DB, auth, files  | No (or 8090 for admin) | Internal only. Web and worker reach it at `http://pocketbase:8090`. |
+| Service     | Responsibility                    | Externally reachable? | Notes |
+|-------------|-----------------------------------|------------------------|--------|
+| **web**     | Next.js app; all browser traffic  | **Yes** (port 3000)   | Only service that should be public. Cloudflare Tunnel points here. |
+| **worker**  | Enrichment job runner; polls PB   | **No** (no ports)     | Same image as web; one process per container. Run with concurrency 1. |
+| **pocketbase** | DB, auth, files; API for web/worker | **No** (internal-only) | Never expose to the internet. Web and worker use `http://pocketbase:8090` on the Docker network. |
+
+**What Cloudflare Tunnel should point to in production:** The **web** service only (e.g. `http://web:3000` or `http://localhost:3000` if the tunnel runs on the same host). Public URL: `https://tracker.nhwalker.net`.
+
+**What should never be publicly exposed:** PocketBase (admin and API). The worker (no HTTP server; internal only). Exposing PocketBase would bypass the app and expose the database and admin UI.
 
 ## PocketBase is internal-only
 
-- The browser **never** talks to PocketBase directly (geometry and logout are proxied through Next.js).
-- Web and worker use `NEXT_PUBLIC_PB_URL=http://pocketbase:8090` on the Docker network.
-- **Cloudflare Tunnel:** Point `https://tracker.nhwalker.net` only at the **web** service (e.g. `http://web:3000`). Do not create a public hostname or tunnel for PocketBase. Admin uses the server over WireGuard or localhost and can expose 8090 locally if needed.
+- The **public browser never** talks to PocketBase directly. Geometry, auth, and file requests go through the Next.js app (same origin).
+- Web and worker talk to PocketBase on the Docker network at `http://pocketbase:8090` (`NEXT_PUBLIC_PB_URL`).
+- **Cloudflare Tunnel (production):** Point `https://tracker.nhwalker.net` **only** at the **web** service. Do **not** create a public hostname or tunnel for PocketBase. Use WireGuard or SSH + localhost to reach the PocketBase admin; optionally expose `8090:8090` in compose for that.
 
 ## Environment variables
 
@@ -58,7 +65,39 @@ See `docs/DEM_DOCKER.md` for the full workflow.
 - **View logs:** `docker compose logs -f`
 - **Stop:** `docker compose down`
 
-Data in the `pb_data` volume persists across restarts. To reset PocketBase data: `docker compose down -v` (removes volumes).
+**PocketBase data** is stored in the named volume `pb_data` (persists across restarts). To reset: `docker compose down -v` (removes volumes).
+
+## Healthchecks and restart policies
+
+- **web:** Healthcheck hits `http://127.0.0.1:3000/` (interval 30s, 3 retries). Restart: `unless-stopped`.
+- **pocketbase:** Healthcheck hits `http://127.0.0.1:8090/api/health`. Restart: `unless-stopped`.
+- **worker:** No healthcheck (no HTTP server; polling process). Restart: `unless-stopped`.
+
+Orchestrators (e.g. Coolify) can use these healthchecks for readiness and restart decisions.
+
+## Resource and concurrency notes
+
+- **Worker concurrency:** Run **one worker replica** (concurrency 1). The worker processes one job at a time; multiple replicas would compete for the same jobs unless you add a proper queue.
+- **DEM mount:** Mount the DEM output directory **read-only** (`:ro`). Compose already uses `./dem-data/output:/data/dem:ro` for web and worker.
+- **PocketBase data:** Must be **persisted**. Use the named volume `pb_data`; do not run PocketBase without a volume or data will be lost on restart.
+
+## Production deployment (Cloudflare Tunnel)
+
+1. Run the stack on the server (same `docker compose up -d` or your orchestrator).
+2. Configure **Cloudflare Tunnel** (or any reverse proxy) so that **only** the **web** service is public:
+   - Public URL: `https://tracker.nhwalker.net`
+   - Backend: `http://web:3000` (or `http://localhost:3000` if the tunnel runs on the same host as Docker).
+3. Do **not** expose PocketBase or the worker to the internet. Keep them on the internal Docker network (and optional WireGuard for admin).
+
+## Reference
+
+| Question | Answer |
+|----------|--------|
+| **Start the stack locally** | From repo root: `docker compose build` then `docker compose up -d`. |
+| **Command that runs web** | `pnpm start` (Next.js). Override in compose: `command: ["pnpm", "start"]`. |
+| **Command that runs worker** | `node --import tsx scripts/enrichment-worker.ts`. Set in compose for the worker service. |
+| **Where PocketBase data is persisted** | Named volume `pb_data`, mounted at `/app/pb_data` in the pocketbase container. Survives `docker compose down`; removed only with `docker compose down -v`. |
+| **Key artifacts** | Root `Dockerfile` (app image), `apps/pb/Dockerfile` (PocketBase), `docker-compose.yml` (web, worker, pocketbase). |
 
 ## Coolify
 

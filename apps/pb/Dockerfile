@@ -2,7 +2,7 @@
 # Build from apps/pb so pb_migrations is in context.
 
 FROM alpine:3.19
-RUN apk add --no-cache ca-certificates unzip
+RUN apk add --no-cache ca-certificates unzip wget
 
 # Use 0.23+ so JS migrations get app.save() (0.22 passes db and uses Dao).
 ARG PB_VERSION=0.23.0

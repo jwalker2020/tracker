@@ -1,5 +1,6 @@
-# Local Docker stack: web (public), worker, pocketbase (internal-only).
-# Cloudflare Tunnel should point only at web (e.g. https://tracker.nhwalker.net -> web:3000).
+# Production Docker stack: web (public), worker, pocketbase (internal-only).
+# Externally reachable: web only (port 3000). Cloudflare Tunnel: point https://tracker.nhwalker.net -> web only.
+# Worker and pocketbase have no host ports; they communicate over the internal network only.
 
 services:
   web:
@@ -10,6 +11,7 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # Internal-only: Docker hostname for same-stack communication. Never use a public URL here.
       NEXT_PUBLIC_PB_URL: http://pocketbase:8090
       DEM_BASE_PATH: /data/dem
       DEM_MANIFEST_PATH: manifest.json
@@ -17,23 +19,36 @@ services:
       - ./dem-data/output:/data/dem:ro
     depends_on:
       pocketbase:
-        condition: service_started
+        condition: service_healthy
     command: ["pnpm", "start"]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - tracker
 
   worker:
     image: tracker-web:latest
     environment:
+      # Worker gets env from container only (no .env.local). Same internal PB URL as web.
       NEXT_PUBLIC_PB_URL: http://pocketbase:8090
       DEM_BASE_PATH: /data/dem
       DEM_MANIFEST_PATH: manifest.json
+      # ENRICHMENT_WORKER_POLL_INTERVAL_MS: 5000
     volumes:
       - ./dem-data/output:/data/dem:ro
     depends_on:
       pocketbase:
-        condition: service_started
+        condition: service_healthy
     command: ["node", "--import", "tsx", "scripts/enrichment-worker.ts"]
     restart: unless-stopped
+    # No ports. No healthcheck (no HTTP server). Run a single replica.
+    networks:
+      - tracker
 
   pocketbase:
     build:
@@ -42,11 +57,22 @@ services:
     image: tracker-pocketbase:latest
     volumes:
       - pb_data:/app/pb_data
-    # Internal only: do not expose ports to host in production.
-    # For local admin over WireGuard/localhost, uncomment:
-    ports:
-      - "8090:8090"
+    # No host ports. Internal-only. For admin over LAN/WireGuard, uncomment and expose 8090 on host.
+    # ports:
+    #   - "8090:8090"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8090/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - tracker
 
 volumes:
   pb_data:
+
+networks:
+  tracker:
+    driver: bridge
