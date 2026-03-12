@@ -97,7 +97,7 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 
 ## Deployment assumptions
 
-- **PocketBase** runs as a separate process; its URL is set via **`NEXT_PUBLIC_PB_URL`**. The Next.js app and the enrichment worker both use this URL for API calls; the web app also uses it for auth cookie domain.
+- **PocketBase** runs as a separate process; its URL is set via **`NEXT_PUBLIC_PB_URL`**. The Next.js app and the enrichment worker both use this URL for API calls; the web app uses it to communicate with PocketBase for authentication and file access.
 - **Optional DEM**: **`DEM_BASE_PATH`** (and optionally **`DEM_MANIFEST_PATH`**) configure server-side DEM tile location. If unset, **GPX-only enrichment** runs: no DEM tiles; elevation and metrics from GPX geometry and `<ele>` only.
 - **Enrichment worker**: Run separately (`pnpm run enrichment-worker` from `apps/web`). **Worker responsibilities**: poll for claimable jobs, claim one, run `runEnrichmentJob` (load GPX, DEM/GPX elevation, write progress/checkpoint, complete or fail). **Web responsibilities**: create/locate job on enrich request, return `jobId`; serve progress and cancel APIs from PocketBase. Progress and cancel state are stored in PocketBase; the worker checks for cancellation during the run.
 - **File serving**: GPX file bytes are served by PocketBase at **`{NEXT_PUBLIC_PB_URL}/api/files/gpx_files/{recordId}/{fileName}`**. The web app (e.g. geometry API) and the worker both fetch GPX via this URL when they need the file body.
