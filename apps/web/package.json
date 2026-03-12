@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "enrichment-worker": "tsx scripts/enrichment-worker.ts"
+    "enrichment-worker": "node --env-file=.env.local --import tsx scripts/enrichment-worker.ts"
   },
   "dependencies": {
     "echarts": "^5.5.0",
