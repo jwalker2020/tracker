@@ -8,7 +8,6 @@ import {
   getResumableCheckpoint,
   updateJobProgress,
 } from "@/app/api/gpx/enrichment-checkpoint";
-import { runEnrichmentInBackground, startProgressLogging } from "@/lib/enrichment/runEnrichment";
 
 const COLLECTION = "gpx_files";
 const CHUNK_SIZE = 10_000;
@@ -61,10 +60,6 @@ export async function POST(request: Request) {
   const demBasePath = process.env.DEM_BASE_PATH?.trim();
 
   if (startAsync) {
-    const workerHandlesJobs =
-      process.env.DISABLE_WEB_ENRICHMENT_RESUME === "true" ||
-      process.env.ENABLE_ENRICHMENT_WORKER === "true";
-
     let checkpoint: Awaited<ReturnType<typeof getResumableCheckpoint>> = null;
     try {
       checkpoint = await getResumableCheckpoint(pb, id);
@@ -86,11 +81,9 @@ export async function POST(request: Request) {
         checkpoint.status === "running" && Number.isFinite(heartbeatMs) && heartbeatMs < HEARTBEAT_MAX_AGE_MS;
 
       if (alreadyRunning) {
-        if (!workerHandlesJobs) startProgressLogging(jobId, checkpointRecordId, false);
         return NextResponse.json({ ok: true, jobId, resumed: false });
       }
 
-      // Resumable or stale running: worker (or instrumentation) will run it.
       isResume = true;
       const total = checkpoint.totalPoints ?? 0;
       const processed = checkpoint.processedPoints ?? 0;
@@ -105,45 +98,35 @@ export async function POST(request: Request) {
         currentPhasePercent: phasePct,
         overallPercentComplete: Math.min(99, overall),
       }, checkpointRecordId);
-      if (workerHandlesJobs) {
-        return NextResponse.json({ ok: true, jobId, resumed: true });
-      }
-      startProgressLogging(jobId, checkpointRecordId, true);
       return NextResponse.json({ ok: true, jobId, resumed: true });
-    } else {
-      jobId = crypto.randomUUID();
-      isResume = false;
-      try {
-        const created = await createCheckpointRecord(pb, {
-          jobId,
-          recordId: id,
-          userId,
-          totalPoints: 0,
-          chunkSize: CHUNK_SIZE,
-        });
-        checkpointRecordId = created.id;
-        await updateJobProgress(pb, jobId, {
-          status: "running",
-          currentPhase: "enrichment",
-          currentPhasePercent: 0,
-          overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING,
-        }, checkpointRecordId);
-      } catch (e: unknown) {
-        const err = e as {
-          response?: { message?: string; data?: Record<string, unknown> };
-          data?: Record<string, unknown>;
-          message?: string;
-        };
-        const detail = err?.response?.data ?? err?.data ?? err?.response?.message ?? err?.message ?? e;
-        console.warn("[gpx/enrich] Checkpoint record create failed:", JSON.stringify(detail, null, 2));
-      }
     }
 
-    if (workerHandlesJobs) {
-      return NextResponse.json({ ok: true, jobId, resumed: isResume });
+    jobId = crypto.randomUUID();
+    isResume = false;
+    try {
+      const created = await createCheckpointRecord(pb, {
+        jobId,
+        recordId: id,
+        userId,
+        totalPoints: 0,
+        chunkSize: CHUNK_SIZE,
+      });
+      checkpointRecordId = created.id;
+      await updateJobProgress(pb, jobId, {
+        status: "running",
+        currentPhase: "enrichment",
+        currentPhasePercent: 0,
+        overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING,
+      }, checkpointRecordId);
+    } catch (e: unknown) {
+      const err = e as {
+        response?: { message?: string; data?: Record<string, unknown> };
+        data?: Record<string, unknown>;
+        message?: string;
+      };
+      const detail = err?.response?.data ?? err?.data ?? err?.response?.message ?? err?.message ?? e;
+      console.warn("[gpx/enrich] Checkpoint record create failed:", JSON.stringify(detail, null, 2));
     }
-    startProgressLogging(jobId, checkpointRecordId, isResume);
-    void runEnrichmentInBackground(id, jobId, checkpointRecordId);
     return NextResponse.json({ ok: true, jobId, resumed: isResume });
   }
 

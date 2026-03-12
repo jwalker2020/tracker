@@ -1,7 +1,7 @@
 /**
  * Worker loop: poll for claimable enrichment jobs, claim one, run the shared executor, repeat.
  * Intended for a separate process/container; not tied to the Next.js request lifecycle.
- * Run with DISABLE_WEB_ENRICHMENT_RESUME=true on the web app so only the worker resumes jobs.
+ * By default the web app does not run jobs; only the worker does.
  * Progress, cancel, and delete-during-enrichment are handled entirely by runEnrichmentJob.
  */
 

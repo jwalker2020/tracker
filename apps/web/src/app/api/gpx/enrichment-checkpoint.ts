@@ -387,8 +387,7 @@ export async function getIncompleteEnrichmentJobs(
 /**
  * Return one claimable job for the worker, or null. Claimable = running or resumable.
  * Caller must claim by calling updateJobProgress(..., { status: "running" }, job.id) then run the executor.
- * Only one worker process should run when using this (no Redis/lock); set DISABLE_WEB_ENRICHMENT_RESUME
- * on the web app when a dedicated worker is used.
+ * Only one worker process should run when using this (no Redis/lock).
  */
 export async function getNextClaimableJob(
   pb: PocketBase

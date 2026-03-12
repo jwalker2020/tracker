@@ -2,7 +2,7 @@
 /**
  * Enrichment worker entrypoint. Run outside the web process (e.g. separate Docker container).
  * Requires: NEXT_PUBLIC_PB_URL, and optionally DEM_BASE_PATH, DEM_MANIFEST_PATH.
- * Set DISABLE_WEB_ENRICHMENT_RESUME=true on the web app when using this worker.
+ * The web app does not run async jobs by default; this worker does.
  *
  * Run from apps/web: pnpm run enrichment-worker
  * Or: pnpm exec tsx scripts/enrichment-worker.ts
