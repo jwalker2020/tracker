@@ -87,6 +87,22 @@ Before and after going live:
 - **PocketBase:** Must not be reachable from the public internet. No Cloudflare hostname, no tunnel, no open firewall port to the internet. Admin uses the server over **local network** or **WireGuard** only (optionally expose 8090 on the host for that network).
 - **Worker:** No HTTP server and no ports. It must not be exposed via tunnel or proxy. It runs only inside the Docker network.
 
+**PocketBase must never have a public hostname or public tunnel.** Only the web app is public; admin access is via the options below.
+
+---
+
+## 8. Admin access to PocketBase
+
+Admin reaches PocketBase **only** via LAN or WireGuard, using one of these options:
+
+**Option A — SSH port-forward (recommended default)**  
+No host port is visible on the network. On the server, expose PocketBase on **localhost only** (e.g. in compose use `127.0.0.1:8090:8090` instead of `8090:8090`). From your admin machine: `ssh -L 8090:localhost:8090 user@server`. Then open **http://localhost:8090/_/** in your browser. Traffic goes over SSH only.
+
+**Option B — LAN/WireGuard-restricted host port**  
+In compose, uncomment and use `ports: - "8090:8090"`. Restrict the host firewall so port 8090 is reachable **only** from your LAN or WireGuard (e.g. allow 8090 from 10.0.0.0/8 or your WireGuard subnet). From a machine on that network, open **http://SERVER_IP:8090/_/** (use the server's IP on that network).
+
+- **Never** give PocketBase a public hostname or Cloudflare Tunnel. The only public entry point is the web app at https://tracker.nhwalker.net.
+
 ---
 
 ## Reference

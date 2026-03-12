@@ -14,9 +14,11 @@ docker compose build
 docker compose up -d
 ```
 
+Run `docker compose ps` to confirm only the **web** service shows a host port (3000). Worker and pocketbase should have no ports listed.
+
 - **Web:** http://localhost:3000 (port 3000 exposed for local testing and for Cloudflare Tunnel).
 - **Worker:** No ports; runs in the background, polls PocketBase for enrichment jobs.
-- **PocketBase:** Internal only (no host ports by default). To reach the admin UI from your machine (e.g. over WireGuard or localhost), uncomment the `ports` block under `pocketbase` in `docker-compose.yml` and run `docker compose up -d` again.
+- **PocketBase:** Internal only (no host ports by default). Expose port 8090 only temporarily or on a LAN/VPN-restricted host when admin access is needed (e.g. uncomment the `ports` block under `pocketbase`; prefer `127.0.0.1:8090:8090` for localhost-only). Then run `docker compose up -d` again.
 
 ## Service responsibilities and visibility
 
@@ -28,13 +30,13 @@ docker compose up -d
 
 **What Cloudflare Tunnel should point to in production:** The **web** service only (e.g. `http://web:3000` or `http://localhost:3000` if the tunnel runs on the same host). Public URL: `https://tracker.nhwalker.net`.
 
-**What should never be publicly exposed:** PocketBase (admin and API). The worker (no HTTP server; internal only). Exposing PocketBase would bypass the app and expose the database and admin UI.
+**What should never be publicly exposed:** PocketBase (admin and API). The worker (no HTTP server; internal only). **PocketBase must never have a public hostname or public tunnel.** Exposing PocketBase would bypass the app and expose the database and admin UI. Admin access: SSH port-forward (recommended) or LAN/WireGuard-restricted host port — see `docs/deployment.md` and `docs/PRODUCTION_DEPLOYMENT.md`.
 
 ## PocketBase is internal-only
 
 - The **public browser never** talks to PocketBase directly. Geometry, auth, and file requests go through the Next.js app (same origin).
-- Web and worker talk to PocketBase on the Docker network at `http://pocketbase:8090` (`NEXT_PUBLIC_PB_URL`).
-- **Cloudflare Tunnel (production):** Point `https://tracker.nhwalker.net` **only** at the **web** service. Do **not** create a public hostname or tunnel for PocketBase. Use WireGuard or SSH + localhost to reach the PocketBase admin; optionally expose `8090:8090` in compose for that.
+- Web and worker talk to PocketBase on the Docker network at `http://pocketbase:8090` (configured via `NEXT_PUBLIC_PB_URL` in this stack). The browser does not call PocketBase directly.
+- **Cloudflare Tunnel (production):** Point `https://tracker.nhwalker.net` **only** at the **web** service. Do **not** create a public hostname or tunnel for PocketBase. Admin access: SSH port-forward to localhost (recommended) or LAN/WireGuard-restricted host port — see deployment docs.
 
 ## Environment variables
 
@@ -87,7 +89,7 @@ Orchestrators (e.g. Coolify) can use these healthchecks for readiness and restar
 2. Configure **Cloudflare Tunnel** (or any reverse proxy) so that **only** the **web** service is public:
    - Public URL: `https://tracker.nhwalker.net`
    - Backend: `http://web:3000` (or `http://localhost:3000` if the tunnel runs on the same host as Docker).
-3. Do **not** expose PocketBase or the worker to the internet. Keep them on the internal Docker network (and optional WireGuard for admin).
+3. Do **not** expose PocketBase or the worker to the internet. Keep them on the internal Docker network (and optional LAN/WireGuard for admin).
 
 ## Reference
 
@@ -101,4 +103,4 @@ Orchestrators (e.g. Coolify) can use these healthchecks for readiness and restar
 
 ## Coolify
 
-Use this Compose file as the source of truth. In Coolify you can import the stack or recreate the three services (web, worker, pocketbase) with the same build contexts, commands, env, and volumes. Expose only the web service to the tunnel.
+Use this Compose file as the source of truth. In Coolify you can import the stack or recreate the three services (web, worker, pocketbase) with the same build contexts, commands, env, and volumes. Expose only the web service to the tunnel. **Do not** assign a public domain, ingress, or exposed port to the worker or pocketbase service. On first deployment, create the initial PocketBase admin user via LAN/WireGuard or temporary local-only port exposure (see deployment docs).

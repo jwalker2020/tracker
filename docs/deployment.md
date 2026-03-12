@@ -85,11 +85,12 @@ Stop: `docker compose down`. Data in the `pb_data` volume persists unless you ru
 
 ---
 
-## Admin access to PocketBase (LAN or WireGuard)
+## Admin access to PocketBase (LAN or WireGuard only)
 
-- PocketBase has **no public port** in the default compose. Admin reaches it only from the **local network** or over **WireGuard** (or similar).
-- **Option A:** On the server, uncomment `ports: - "8090:8090"` under `pocketbase` in `docker-compose.yml` and restart. Then from a machine on the same LAN or over WireGuard, open `http://<server-ip>:8090/_/`.
-- **Option B:** Use SSH port-forwarding to the host, then bind PocketBase to localhost and forward (e.g. `ssh -L 8090:localhost:8090 user@server`), and ensure PocketBase is exposed on the host’s localhost only.
+PocketBase has **no public port** in the default compose. **PocketBase must never have a public hostname or public tunnel.** Admin access is only via one of these options:
+
+- **SSH port-forward (recommended default):** Expose PocketBase on the host on **localhost only** (e.g. `127.0.0.1:8090:8090` under `pocketbase` in `docker-compose.yml`). From your machine: `ssh -L 8090:localhost:8090 user@server`, then open http://localhost:8090/_/. No port is visible on the network.
+- **LAN/WireGuard-restricted host port:** Uncomment `ports: - "8090:8090"` under `pocketbase` and restrict the host firewall so 8090 is reachable only from your LAN or WireGuard. From a machine on that network, open `http://SERVER_IP:8090/_/` (use the server's IP on that network).
 
 Never expose PocketBase to the public internet.
 
