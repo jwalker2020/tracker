@@ -121,22 +121,19 @@ Use this Compose file as the source of truth. In Coolify you can import the stac
 
 - **Service name:** `dem-tools` (internal-only).
 - **Image/build:** Uses `tools/dem/Dockerfile` to build the DEM tooling image.
-- **Volumes:** Mounts your DEM working directory, for example:
-  - `/srv/tracker/dem-data/raw` → `/workspace/raw`
-  - `/srv/tracker/dem-data/output` → `/workspace/output`
-- **Command:** Uses an idle shell command (e.g. `sleep infinity`) so the container stays up and is accessible from the Coolify UI terminal. The DEM pipeline itself is run manually via `/docker-entry.sh` inside the container.
+- **Volumes:** Named volumes `dem_raw` and `dem_output` (see Mounting DEM data). Inside the container: `dem_raw` → `/workspace/raw`, `dem_output` → `/workspace/output`.
+- **Command:** Uses an idle shell (e.g. `sleep infinity`) so the container stays up; run DEM commands manually from the Coolify terminal. The default working directory is `/app`; use the **pnpm** scripts exposed by the image.
 
 To generate or update DEM data in production:
 
-1. In Coolify, open the **terminal for the `dem-tools` service**.
-2. From the shell prompt inside the container, run one of:
-   - `./docker-entry.sh all` — full pipeline (download → process → manifest).
-   - `./docker-entry.sh download` — download tiles into `/workspace/raw` only.
-   - `./docker-entry.sh process` — process raw tiles from `/workspace/raw` into `/workspace/output`.
-   - `./docker-entry.sh manifest` — regenerate `manifest.json` in `/workspace/output`.
-3. **Raw files:** Written under `/workspace/raw` (host: `/srv/tracker/dem-data/raw`).
-4. **Processed output:** Decompressed tiles and `manifest.json` under `/workspace/output` (host: `/srv/tracker/dem-data/output`).
-5. To verify success from the Coolify terminal, run:
-   - `ls -1 /workspace/raw` — should list raw `.tif` files.
-   - `ls -1 /workspace/output` — should list processed `.tif` files and `manifest.json`.
-6. Web and worker already mount `/srv/tracker/dem-data/output:/data/dem:ro`, so they automatically consume the generated DEM data once those files exist.
+1. In Coolify, open the **terminal for the `dem-tools` service** (you should be in `/app`).
+2. Run one of these **exact** commands:
+   - **Full pipeline:** `pnpm run setup-nh -- --output /workspace/output`
+   - **Download only:** `pnpm run download -- --output /workspace/raw --source usgs-nh --no-manifest`
+   - **Manifest only:** `pnpm run manifest -- --input /workspace/output --output /workspace/output/manifest.json`
+3. **Raw files** go to `/workspace/raw` (volume `dem_raw`); **output** (tiles + `manifest.json`) goes to `/workspace/output` (volume `dem_output`).
+4. **Verify success:** After running `pnpm run setup-nh -- --output /workspace/output`, run:
+   - `ls -1 /workspace/raw` — should list raw `.tif` files (if you used download step).
+   - `ls -1 /workspace/output` — should list `.tif` files and `manifest.json`.
+   - Confirm `manifest.json` exists: `test -f /workspace/output/manifest.json && echo ok`.
+5. Web and worker mount `dem_output` read-only at `/data/dem`, so they automatically use the generated DEM data once those files exist.

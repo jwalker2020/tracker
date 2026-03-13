@@ -18,7 +18,8 @@ RUN pnpm install
 COPY src ./src
 COPY tsconfig.json ./
 COPY docker-entry.sh /docker-entry.sh
-RUN chmod +x /docker-entry.sh
+COPY docker-entry.sh ./
+RUN chmod +x /docker-entry.sh ./docker-entry.sh
 
 # Default: run full pipeline. Override with: docker run ... dem-tools download
 ENTRYPOINT ["/docker-entry.sh"]

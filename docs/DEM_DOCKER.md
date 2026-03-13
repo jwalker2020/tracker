@@ -4,8 +4,8 @@ DEM data is **always** prepared using the dedicated DEM tooling container. This 
 
 ## DEM tooling container (one-shot)
 
-- **Location:** `tools/dem/Dockerfile`, `tools/dem/docker-entry.sh`
-- **Role:** Download DEM source data (USGS NH), process (decompress) tiles so geotiff.js can read them, generate `manifest.json`. Writes to mounted host directories. Not a long-running service.
+- **Location:** `tools/dem/Dockerfile`, `tools/dem/src/` (CLI: `tsx src/cli.ts` via pnpm scripts).
+- **Role:** Download DEM source data (USGS NH), generate `manifest.json`. Writes to mounted directories or named volumes. Not a long-running service.
 - **Separate from:** web, worker, pocketbase.
 
 ### Run from tracker root
@@ -24,7 +24,17 @@ pnpm dem:docker -- manifest
 
 Optional: `DEM_DATA_DIR=/path/to/dem-data pnpm dem:docker` to use a different base directory.
 
-### Output directory structure (host)
+### Running inside the dem-tools container (Coolify)
+
+When the stack runs the `dem-tools` service (e.g. in Coolify), open its terminal and run from `/app`:
+
+- **Full pipeline:** `pnpm run setup-nh -- --output /workspace/output`
+- **Download only:** `pnpm run download -- --output /workspace/raw --source usgs-nh --no-manifest`
+- **Manifest only:** `pnpm run manifest -- --input /workspace/output --output /workspace/output/manifest.json`
+
+Output goes to `/workspace/output` (volume `dem_output`); raw downloads to `/workspace/raw` (volume `dem_raw`) if using the download step. **Verify:** run `pnpm run setup-nh -- --output /workspace/output`, then `ls -1 /workspace/output` and confirm `manifest.json` exists in `/workspace/output`. See `docs/DOCKER_DEPLOYMENT.md` for volume layout.
+
+### Output directory structure (host or volume)
 
 ```
 dem-data/
