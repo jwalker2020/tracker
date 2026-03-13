@@ -4,10 +4,12 @@
   "packageManager": "pnpm@10.30.3",
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
+    "concurrently": "^9.1.0",
     "tailwindcss": "^4.0.0"
   },
   "scripts": {
     "dev": "pnpm -C apps/web dev",
+    "dev:all": "pnpm exec concurrently -n pb,web,worker \"cd apps/pb && ./pocketbase serve\" \"pnpm -C apps/web dev\" \"pnpm -C apps/web run enrichment-worker\"",
     "build": "pnpm --filter web build",
     "lint": "pnpm --filter web lint",
     "dem:manifest": "pnpm -C tools/dem run manifest",

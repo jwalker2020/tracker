@@ -53,6 +53,14 @@ If DEM is unset, **GPX-only enrichment** runs: elevation and stats use GPX `<ele
 pnpm dev
 ```
 
+To run **PocketBase**, **web**, and the **enrichment worker** together during local development (e.g. to test async enrichment), from the repo root run:
+
+```bash
+pnpm dev:all
+```
+
+This starts PocketBase at http://localhost:8090, the Next.js dev server at http://localhost:3000, and the worker in the same terminal with prefixed output (`pb`, `web`, `worker`). Ensure the PocketBase binary is in `apps/pb/` and `apps/web/.env.local` exists with `NEXT_PUBLIC_PB_URL=http://localhost:8090`.
+
 ## GPX Viewer
 
 The **GPX Viewer** at `/` lets you upload GPX files, store them in PocketBase, and view one or more tracks on a Leaflet map (OpenStreetMap or USGS Topo).
