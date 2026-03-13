@@ -7,6 +7,7 @@
     "manifest": "tsx src/cli.ts manifest",
     "download": "tsx src/cli.ts download",
     "setup-nh": "tsx src/cli.ts setup-nh",
+    "dem:docker": "tsx src/cli.ts setup-nh --output /workspace/output",
     "build": "tsc"
   },
   "dependencies": {
