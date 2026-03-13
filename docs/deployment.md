@@ -26,7 +26,7 @@ This document explains how to run and deploy the app with Docker and Coolify. Th
 |------------|---------------------|--------|
 | **web**    | **Yes** (port 3000) | Only service that should receive public traffic. Cloudflare Tunnel points here. |
 | **worker** | **No** (no ports)   | Runs inside the stack; no HTTP server. |
-| **pocketbase** | **No** (no ports) | Internal-only. Never expose to the internet. Admin uses LAN or WireGuard. |
+| **pocketbase** | **No** (8090 on LAN IP only) | Internal-only. Port 8090 bound to host LAN IP for admin UI; never expose to the internet. |
 | **dem-tools** | **No** (no ports) | Internal-only DEM tooling container. Used via Coolify terminal to generate DEM data; never public. |
 
 The browser talks only to the web service. PocketBase is never contacted directly by the public.
@@ -37,12 +37,13 @@ The browser talks only to the web service. PocketBase is never contacted directl
 
 Set in `docker-compose.yml` or in Coolify for each service:
 
-| Variable | Web | Worker | Purpose |
-|----------|-----|--------|---------|
-| `NEXT_PUBLIC_PB_URL` | ✅ | ✅ | **Must** be `http://pocketbase:8090` (internal hostname). Never use a public URL. |
-| `DEM_BASE_PATH` | Optional | Optional | e.g. `/data/dem` if using DEM. |
-| `DEM_MANIFEST_PATH` | Optional | Optional | e.g. `manifest.json`. |
-| `ENRICHMENT_WORKER_POLL_INTERVAL_MS` | — | Optional | Poll interval when idle (default 5000). |
+| Variable | Web | Worker | PocketBase / stack | Purpose |
+|----------|-----|--------|--------------------|---------|
+| `NEXT_PUBLIC_PB_URL` | ✅ | ✅ | — | **Must** be `http://pocketbase:8090` (internal hostname). Never use a public URL. |
+| `DEM_BASE_PATH` | Optional | Optional | — | e.g. `/data/dem` if using DEM. |
+| `DEM_MANIFEST_PATH` | Optional | Optional | — | e.g. `manifest.json`. |
+| `ENRICHMENT_WORKER_POLL_INTERVAL_MS` | — | Optional | — | Poll interval when idle (default 5000). |
+| `POCKETBASE_LAN_IP` | — | — | Optional | Host’s LAN IP to bind port 8090 for admin UI (default `127.0.0.1`). Set in Coolify or `.env` for `docker compose`. |
 
 - **Worker** does not use `.env.local`; all configuration comes from the container environment (compose or Coolify).
 - **Production:** Do not set `GUEST_USER_ID`; use real auth only.
@@ -58,9 +59,9 @@ docker compose build
 docker compose up -d
 ```
 
-- **Web:** http://localhost:3000 (only service with a host port).
+- **Web:** http://localhost:3000 (only service with a public host port).
 - **Worker:** No ports; runs in the background.
-- **PocketBase:** No host ports. To reach the admin UI from your machine (e.g. over WireGuard), uncomment the `ports` block under `pocketbase` in `docker-compose.yml` and restart.
+- **PocketBase:** Port 8090 is bound to the host’s LAN IP. Set the `POCKETBASE_LAN_IP` environment variable to your server’s LAN address (e.g. in Coolify). From a machine on that network, open `http://<LAN_IP>:8090/_/` for the admin UI.
 
 Stop: `docker compose down`. Data in the `pb_data` volume persists unless you run `docker compose down -v`.
 
@@ -72,7 +73,7 @@ Stop: `docker compose down`. Data in the `pb_data` volume persists unless you ru
 2. In Coolify, create or import a stack with four services:
    - **web** — Build from repo root (context `.`, Dockerfile `Dockerfile`). Command: `pnpm start`. Expose port **3000** (this is the only service that should be reachable by the tunnel).
    - **worker** — Same image as web. Command: `node --import tsx scripts/enrichment-worker.ts`. **Do not** expose any ports.
-   - **pocketbase** — Build from `apps/pb` (context `./apps/pb`, Dockerfile `Dockerfile`). **Do not** expose any ports. Attach a persistent volume for **pb_data** at `/app/pb_data`.
+   - **pocketbase** — Build from `apps/pb` (context `./apps/pb`, Dockerfile `Dockerfile`). Expose port **8090** bound to the host’s LAN IP only: set `POCKETBASE_LAN_IP` to your server’s LAN IP (not `0.0.0.0`). Attach a persistent volume for **pb_data** at `/app/pb_data`.
    - **dem-tools** — Build from `tools/dem` (context `./tools/dem`, Dockerfile `Dockerfile`). **Do not** expose any ports. Attach the **named volumes** `dem_raw` and `dem_output` so they map to `/workspace/raw` and `/workspace/output` inside the container. Command can be a simple idle command such as `sleep infinity` so the container stays available for terminal access.
 3. Set environment variables as in the table above. Ensure `NEXT_PUBLIC_PB_URL=http://pocketbase:8090` for both web and worker.
 4. If using DEM, attach the `dem_output` volume read-only for web and worker (`dem_output:/data/dem:ro`) and set `DEM_BASE_PATH` and `DEM_MANIFEST_PATH`.
@@ -88,12 +89,23 @@ Stop: `docker compose down`. Data in the `pb_data` volume persists unless you ru
 
 ---
 
-## Admin access to PocketBase (LAN or WireGuard only)
+## PocketBase Admin Access (LAN only)
 
-PocketBase has **no public port** in the default compose. **PocketBase must never have a public hostname or public tunnel.** Admin access is only via one of these options:
+Port 8090 is published **only on the host’s LAN interface** via the `POCKETBASE_LAN_IP` environment variable (see `docker-compose.yml`: `${POCKETBASE_LAN_IP:-127.0.0.1}:8090:8090`). Set `POCKETBASE_LAN_IP` to your server’s LAN IP in Coolify (or a `.env` file when using `docker compose`). This allows admin access from the same LAN or WireGuard without exposing PocketBase to the public internet.
 
-- **SSH port-forward (recommended default):** Expose PocketBase on the host on **localhost only** (e.g. `127.0.0.1:8090:8090` under `pocketbase` in `docker-compose.yml`). From your machine: `ssh -L 8090:localhost:8090 user@server`, then open http://localhost:8090/_/. No port is visible on the network.
-- **LAN/WireGuard-restricted host port:** Uncomment `ports: - "8090:8090"` under `pocketbase` and restrict the host firewall so 8090 is reachable only from your LAN or WireGuard. From a machine on that network, open `http://SERVER_IP:8090/_/` (use the server's IP on that network).
+- **Example admin URL (from a machine on the LAN):** `http://<your-server-lan-ip>:8090/_/`
+- If `POCKETBASE_LAN_IP` is unset, the default is `127.0.0.1` (localhost only; use SSH port-forward to reach it).
+
+**PocketBase must NOT be exposed through:** Cloudflare Tunnel, Coolify public services, or any reverse proxy that forwards to the internet. Only the web service receives public traffic.
+
+**Security note:** PocketBase admin access should only be reachable from LAN or WireGuard. The Docker port binding (`IP:8090:8090`) restricts the listen address to that host IP, so the port is not bound on `0.0.0.0`. You can add a firewall rule to allow TCP 8090 only from your LAN or WireGuard subnet for defense in depth.
+
+---
+
+## Other admin options (optional)
+
+- **SSH port-forward:** Expose PocketBase on the host on **localhost only** (e.g. `127.0.0.1:8090:8090` under `pocketbase`) and use `ssh -L 8090:localhost:8090 user@server`; then open http://localhost:8090/_/. No port visible on the network.
+- If you set `POCKETBASE_LAN_IP` to your server’s LAN IP, a machine on that network can open `http://<LAN_IP>:8090/_/` directly.
 
 Never expose PocketBase to the public internet.
 

@@ -1,6 +1,6 @@
-# Production Docker stack: web (public), worker, pocketbase (internal-only).
+# Production Docker stack: web (public), worker, pocketbase (internal + LAN-only admin), dem-tools.
 # Externally reachable: web only (port 3000). Cloudflare Tunnel: point https://tracker.nhwalker.net -> web only.
-# Worker and pocketbase have no host ports; they communicate over the internal network only.
+# PocketBase: 8090 bound to host LAN IP only (admin UI); internal network for web/worker. Worker has no host ports.
 
 services:
   web:
@@ -57,9 +57,9 @@ services:
     image: tracker-pocketbase:latest
     volumes:
       - pb_data:/app/pb_data
-    # No host ports. Internal-only. For admin over LAN/WireGuard, uncomment and expose 8090 on host.
-    # ports:
-    #   - "8090:8090"
+    # LAN-only: bind 8090 to the host's LAN IP. Set POCKETBASE_LAN_IP to your server's LAN IP (e.g. in Coolify env); default 127.0.0.1 = localhost only.
+    ports:
+      - "8090:8090"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8090/api/health || exit 1"]
