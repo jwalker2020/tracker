@@ -28,11 +28,11 @@ Optional: `DEM_DATA_DIR=/path/to/dem-data pnpm dem:docker` to use a different ba
 
 When the stack runs the `dem-tools` service (e.g. in Coolify), open its terminal and run from `/app`:
 
-- **Full pipeline:** `pnpm run setup-nh -- --output /workspace/output`
+- **Full pipeline:** `pnpm run dem:docker`
 - **Download only:** `pnpm run download -- --output /workspace/raw --source usgs-nh --no-manifest`
 - **Manifest only:** `pnpm run manifest -- --input /workspace/output --output /workspace/output/manifest.json`
 
-Output goes to `/workspace/output` (volume `dem_output`); raw downloads to `/workspace/raw` (volume `dem_raw`) if using the download step. **Verify:** run `pnpm run setup-nh -- --output /workspace/output`, then `ls -1 /workspace/output` and confirm `manifest.json` exists in `/workspace/output`. See `docs/DOCKER_DEPLOYMENT.md` for volume layout.
+Output goes to `/workspace/output` (volume `dem_output`); raw downloads to `/workspace/raw` (volume `dem_raw`) if using the download step. **Verify:** run `pnpm run dem:docker`, then `ls -1 /workspace/output` and confirm `manifest.json` exists in `/workspace/output`. See `docs/DOCKER_DEPLOYMENT.md` for volume layout.
 
 ### Output directory structure (host or volume)
 

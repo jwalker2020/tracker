@@ -128,11 +128,11 @@ To generate or update DEM data in production:
 
 1. In Coolify, open the **terminal for the `dem-tools` service** (you should be in `/app`).
 2. Run one of these **exact** commands:
-   - **Full pipeline:** `pnpm run setup-nh -- --output /workspace/output`
+   - **Full pipeline:** `pnpm run dem:docker`
    - **Download only:** `pnpm run download -- --output /workspace/raw --source usgs-nh --no-manifest`
    - **Manifest only:** `pnpm run manifest -- --input /workspace/output --output /workspace/output/manifest.json`
 3. **Raw files** go to `/workspace/raw` (volume `dem_raw`); **output** (tiles + `manifest.json`) goes to `/workspace/output` (volume `dem_output`).
-4. **Verify success:** After running `pnpm run setup-nh -- --output /workspace/output`, run:
+4. **Verify success:** After running `pnpm run dem:docker`, run:
    - `ls -1 /workspace/raw` — should list raw `.tif` files (if you used download step).
    - `ls -1 /workspace/output` — should list `.tif` files and `manifest.json`.
    - Confirm `manifest.json` exists: `test -f /workspace/output/manifest.json && echo ok`.
