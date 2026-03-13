@@ -73,9 +73,9 @@ Stop: `docker compose down`. Data in the `pb_data` volume persists unless you ru
    - **web** — Build from repo root (context `.`, Dockerfile `Dockerfile`). Command: `pnpm start`. Expose port **3000** (this is the only service that should be reachable by the tunnel).
    - **worker** — Same image as web. Command: `node --import tsx scripts/enrichment-worker.ts`. **Do not** expose any ports.
    - **pocketbase** — Build from `apps/pb` (context `./apps/pb`, Dockerfile `Dockerfile`). **Do not** expose any ports. Attach a persistent volume for **pb_data** at `/app/pb_data`.
-   - **dem-tools** — Build from `tools/dem` (context `./tools/dem`, Dockerfile `Dockerfile`). **Do not** expose any ports. Mount your DEM base directory (e.g. `/srv/tracker/dem-data/raw` → `/workspace/raw`, `/srv/tracker/dem-data/output` → `/workspace/output`). Command can be a simple idle command such as `sleep infinity` so the container stays available for terminal access.
+   - **dem-tools** — Build from `tools/dem` (context `./tools/dem`, Dockerfile `Dockerfile`). **Do not** expose any ports. Attach the **named volumes** `dem_raw` and `dem_output` so they map to `/workspace/raw` and `/workspace/output` inside the container. Command can be a simple idle command such as `sleep infinity` so the container stays available for terminal access.
 3. Set environment variables as in the table above. Ensure `NEXT_PUBLIC_PB_URL=http://pocketbase:8090` for both web and worker.
-4. If using DEM, mount the DEM output directory read-only for web and worker (e.g. `/srv/tracker/dem-data/output:/data/dem:ro`) and set `DEM_BASE_PATH` and `DEM_MANIFEST_PATH`.
+4. If using DEM, attach the `dem_output` volume read-only for web and worker (`dem_output:/data/dem:ro`) and set `DEM_BASE_PATH` and `DEM_MANIFEST_PATH`.
 5. Do **not** add cloudflared to this stack; the tunnel is configured separately (see below).
 
 ---

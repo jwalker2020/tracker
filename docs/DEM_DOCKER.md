@@ -41,21 +41,21 @@ dem-data/
 
 Mount the **output/** directory and set env so the app reads from it.
 
-### Docker Compose
+### Docker Compose (named volumes)
 
-In **docker-compose.yml**, under **web** and **worker** (production server example):
+In **docker-compose.yml**, under **web** and **worker** (production server example), use the `dem_output` named volume:
 
 ```yaml
 environment:
   DEM_BASE_PATH: /data/dem
   DEM_MANIFEST_PATH: manifest.json
 volumes:
-  - /srv/tracker/dem-data/output:/data/dem:ro
+  - dem_output:/data/dem:ro
 ```
 
-So `/srv/tracker/dem-data/output` (host) is available at `/data/dem` inside the containers. Adjust `/srv/tracker/dem-data` to match your server’s DEM base directory.
+Docker / Coolify will create the `dem_output` volume automatically. You do not need to SSH into the server or create directories by hand.
 
-For local-only Docker testing, you can instead mount the repo-relative folder:
+For local-only Docker testing, you can still mount a repo-relative folder instead if you prefer:
 
 ```yaml
 volumes:
@@ -80,7 +80,7 @@ Use the real absolute path to your repo’s `dem-data/output`.
 | Step | Action |
 |------|--------|
 | 1. Prepare DEM | `pnpm dem:docker` (from tracker root) |
-| 2. Mount output in compose | `/srv/tracker/dem-data/output:/data/dem:ro` for web + worker (or `./dem-data/output:/data/dem:ro` for local-only Docker) |
+| 2. Mount output in compose | `dem_output:/data/dem:ro` for web + worker (or `./dem-data/output:/data/dem:ro` for local-only Docker) |
 | 3. Set env in compose | `DEM_BASE_PATH=/data/dem`, `DEM_MANIFEST_PATH=manifest.json` |
 
 No Node or GDAL required on the host; the container is the only supported way to prepare DEM data.

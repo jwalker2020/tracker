@@ -54,14 +54,19 @@ The worker does **not** use `.env.local`; all env comes from the container (comp
 
 ## Mounting DEM data
 
-DEM data is always prepared with the DEM tooling container. From the repo root you can run `pnpm dem:docker` for local testing, or use the `dem-tools` service in production (see below). In production on the server, choose a durable host directory such as `/srv/tracker/dem-data`; the tooling writes to its `raw` and `output` subfolders.
+DEM data is always prepared with the DEM tooling container. From the repo root you can run `pnpm dem:docker` for local testing, or use the `dem-tools` service in production (see below).
+
+In production, DEM data is stored in **Docker-managed named volumes** — no SSH or manual directory creation on the host is required. The Compose file defines:
+
+- `dem_raw` — raw USGS GeoTIFF downloads
+- `dem_output` — processed tiles + `manifest.json` (consumed by the app)
 
 In **docker-compose.yml**, under **web** and **worker**:
 
-- **volumes:** `- /srv/tracker/dem-data/output:/data/dem:ro`
+- **volumes:** `- dem_output:/data/dem:ro`
 - **environment:** `DEM_BASE_PATH: /data/dem`, `DEM_MANIFEST_PATH: manifest.json`
 
-Adjust `/srv/tracker/dem-data` to your server’s DEM base directory. See `docs/DEM_DOCKER.md` for the full workflow and local options.
+Docker / Coolify will create `dem_raw` and `dem_output` automatically when the stack is started. See `docs/DEM_DOCKER.md` for the full workflow and local options.
 
 ## Build and run commands
 
@@ -83,7 +88,7 @@ Orchestrators (e.g. Coolify) can use these healthchecks for readiness and restar
 ## Resource and concurrency notes
 
 - **Worker concurrency:** Run **one worker replica** (concurrency 1). The worker processes one job at a time; multiple replicas would compete for the same jobs unless you add a proper queue.
-- **DEM mount:** Mount the DEM output directory **read-only** (`:ro`). In production Compose, web and worker use `/srv/tracker/dem-data/output:/data/dem:ro` (update the base path if your server uses a different location).
+- **DEM mount:** Mount the DEM output volume **read-only** (`:ro`). In production Compose, web and worker use the named volume `dem_output:/data/dem:ro`.
 - **PocketBase data:** Must be **persisted**. Use the named volume `pb_data`; do not run PocketBase without a volume or data will be lost on restart.
 
 ## Production deployment (Cloudflare Tunnel)
