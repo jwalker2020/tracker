@@ -16,7 +16,7 @@ services:
       DEM_BASE_PATH: /data/dem
       DEM_MANIFEST_PATH: manifest.json
     volumes:
-      - ./dem-data/output:/data/dem:ro
+      - /srv/tracker/dem-data/output:/data/dem:ro
     depends_on:
       pocketbase:
         condition: service_healthy
@@ -40,7 +40,7 @@ services:
       DEM_MANIFEST_PATH: manifest.json
       # ENRICHMENT_WORKER_POLL_INTERVAL_MS: 5000
     volumes:
-      - ./dem-data/output:/data/dem:ro
+      - /srv/tracker/dem-data/output:/data/dem:ro
     depends_on:
       pocketbase:
         condition: service_healthy
@@ -67,6 +67,23 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - tracker
+
+  dem-tools:
+    build:
+      context: ./tools/dem
+      dockerfile: Dockerfile
+    image: tracker-dem-tools:latest
+    # Internal-only maintenance container for DEM generation. No ports; not public.
+    volumes:
+      - /srv/tracker/dem-data/raw:/workspace/raw
+      - /srv/tracker/dem-data/output:/workspace/output
+    # Override the image entrypoint so the container idles and is reachable via shell.
+    # DEM tooling is run manually inside the container (see docs) via /docker-entry.sh.
+    entrypoint: ["/bin/sh", "-lc"]
+    command: ["sleep infinity"]
+    restart: unless-stopped
     networks:
       - tracker
 

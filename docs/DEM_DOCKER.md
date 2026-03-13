@@ -39,21 +39,28 @@ dem-data/
 
 ## How web and worker consume DEM output
 
-Mount **dem-data/output** and set env so the app reads from it.
+Mount the **output/** directory and set env so the app reads from it.
 
 ### Docker Compose
 
-In **docker-compose.yml**, under **web** and **worker**:
+In **docker-compose.yml**, under **web** and **worker** (production server example):
 
 ```yaml
 environment:
   DEM_BASE_PATH: /data/dem
   DEM_MANIFEST_PATH: manifest.json
 volumes:
-  - ./dem-data/output:/data/dem:ro
+  - /srv/tracker/dem-data/output:/data/dem:ro
 ```
 
-So `./dem-data/output` (host) is available at `/data/dem` inside the containers. Run `pnpm dem:docker` first so `dem-data/output` exists.
+So `/srv/tracker/dem-data/output` (host) is available at `/data/dem` inside the containers. Adjust `/srv/tracker/dem-data` to match your server’s DEM base directory.
+
+For local-only Docker testing, you can instead mount the repo-relative folder:
+
+```yaml
+volumes:
+  - ./dem-data/output:/data/dem:ro
+```
 
 ### Local dev (no Docker for app)
 
@@ -73,7 +80,7 @@ Use the real absolute path to your repo’s `dem-data/output`.
 | Step | Action |
 |------|--------|
 | 1. Prepare DEM | `pnpm dem:docker` (from tracker root) |
-| 2. Mount output in compose | `./dem-data/output:/data/dem:ro` for web + worker |
+| 2. Mount output in compose | `/srv/tracker/dem-data/output:/data/dem:ro` for web + worker (or `./dem-data/output:/data/dem:ro` for local-only Docker) |
 | 3. Set env in compose | `DEM_BASE_PATH=/data/dem`, `DEM_MANIFEST_PATH=manifest.json` |
 
 No Node or GDAL required on the host; the container is the only supported way to prepare DEM data.

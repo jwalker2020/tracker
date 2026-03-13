@@ -22,11 +22,12 @@ Run `docker compose ps` to confirm only the **web** service shows a host port (3
 
 ## Service responsibilities and visibility
 
-| Service     | Responsibility                    | Externally reachable? | Notes |
-|-------------|-----------------------------------|------------------------|--------|
-| **web**     | Next.js app; all browser traffic  | **Yes** (port 3000)   | Only service that should be public. Cloudflare Tunnel points here. |
-| **worker**  | Enrichment job runner; polls PB   | **No** (no ports)     | Same image as web; one process per container. Run with concurrency 1. |
-| **pocketbase** | DB, auth, files; API for web/worker | **No** (internal-only) | Never expose to the internet. Web and worker use `http://pocketbase:8090` on the Docker network. |
+| Service       | Responsibility                    | Externally reachable? | Notes |
+|---------------|-----------------------------------|------------------------|--------|
+| **web**       | Next.js app; all browser traffic  | **Yes** (port 3000)   | Only service that should be public. Cloudflare Tunnel points here. |
+| **worker**    | Enrichment job runner; polls PB   | **No** (no ports)     | Same image as web; one process per container. Run with concurrency 1. |
+| **pocketbase**| DB, auth, files; API for web/worker | **No** (internal-only) | Never expose to the internet. Web and worker use `http://pocketbase:8090` on the Docker network. |
+| **dem-tools** | DEM maintenance tooling           | **No** (no ports)     | Internal-only container for generating DEM data; accessed via Coolify terminal, not the public web. |
 
 **What Cloudflare Tunnel should point to in production:** The **web** service only (e.g. `http://web:3000` or `http://localhost:3000` if the tunnel runs on the same host). Public URL: `https://tracker.nhwalker.net`.
 
@@ -53,12 +54,14 @@ The worker does **not** use `.env.local`; all env comes from the container (comp
 
 ## Mounting DEM data
 
-DEM data is always prepared with the DEM tooling container. From the repo root run `pnpm dem:docker`; output goes to `./dem-data/output` (processed tiles + `manifest.json`). Then in `docker-compose.yml`, under **web** and **worker**:
+DEM data is always prepared with the DEM tooling container. From the repo root you can run `pnpm dem:docker` for local testing, or use the `dem-tools` service in production (see below). In production on the server, choose a durable host directory such as `/srv/tracker/dem-data`; the tooling writes to its `raw` and `output` subfolders.
 
-- **volumes:** `- ./dem-data/output:/data/dem:ro`
+In **docker-compose.yml**, under **web** and **worker**:
+
+- **volumes:** `- /srv/tracker/dem-data/output:/data/dem:ro`
 - **environment:** `DEM_BASE_PATH: /data/dem`, `DEM_MANIFEST_PATH: manifest.json`
 
-See `docs/DEM_DOCKER.md` for the full workflow.
+Adjust `/srv/tracker/dem-data` to your server’s DEM base directory. See `docs/DEM_DOCKER.md` for the full workflow and local options.
 
 ## Build and run commands
 
@@ -80,7 +83,7 @@ Orchestrators (e.g. Coolify) can use these healthchecks for readiness and restar
 ## Resource and concurrency notes
 
 - **Worker concurrency:** Run **one worker replica** (concurrency 1). The worker processes one job at a time; multiple replicas would compete for the same jobs unless you add a proper queue.
-- **DEM mount:** Mount the DEM output directory **read-only** (`:ro`). Compose already uses `./dem-data/output:/data/dem:ro` for web and worker.
+- **DEM mount:** Mount the DEM output directory **read-only** (`:ro`). In production Compose, web and worker use `/srv/tracker/dem-data/output:/data/dem:ro` (update the base path if your server uses a different location).
 - **PocketBase data:** Must be **persisted**. Use the named volume `pb_data`; do not run PocketBase without a volume or data will be lost on restart.
 
 ## Production deployment (Cloudflare Tunnel)
@@ -99,8 +102,36 @@ Orchestrators (e.g. Coolify) can use these healthchecks for readiness and restar
 | **Command that runs web** | `pnpm start` (Next.js). Override in compose: `command: ["pnpm", "start"]`. |
 | **Command that runs worker** | `node --import tsx scripts/enrichment-worker.ts`. Set in compose for the worker service. |
 | **Where PocketBase data is persisted** | Named volume `pb_data`, mounted at `/app/pb_data` in the pocketbase container. Survives `docker compose down`; removed only with `docker compose down -v`. |
-| **Key artifacts** | Root `Dockerfile` (app image), `apps/pb/Dockerfile` (PocketBase), `docker-compose.yml` (web, worker, pocketbase). |
+| **Key artifacts** | Root `Dockerfile` (app image), `apps/pb/Dockerfile` (PocketBase), `tools/dem/Dockerfile` (DEM tooling), `docker-compose.yml` (web, worker, pocketbase, dem-tools). |
 
 ## Coolify
 
-Use this Compose file as the source of truth. In Coolify you can import the stack or recreate the three services (web, worker, pocketbase) with the same build contexts, commands, env, and volumes. Expose only the web service to the tunnel. **Do not** assign a public domain, ingress, or exposed port to the worker or pocketbase service. On first deployment, create the initial PocketBase admin user via LAN/WireGuard or temporary local-only port exposure (see deployment docs).
+Use this Compose file as the source of truth. In Coolify you can import the stack or recreate the four services (**web**, **worker**, **pocketbase**, **dem-tools**) with the same build contexts, commands, env, and volumes.
+
+- Expose **only** the web service to the tunnel.
+- **Do not** assign a public domain, ingress, or exposed port to the worker, pocketbase, or dem-tools services.
+- On first deployment, create the initial PocketBase admin user via LAN/WireGuard or temporary local-only port exposure (see deployment docs).
+
+### DEM tools service (maintenance container)
+
+- **Service name:** `dem-tools` (internal-only).
+- **Image/build:** Uses `tools/dem/Dockerfile` to build the DEM tooling image.
+- **Volumes:** Mounts your DEM working directory, for example:
+  - `/srv/tracker/dem-data/raw` → `/workspace/raw`
+  - `/srv/tracker/dem-data/output` → `/workspace/output`
+- **Command:** Uses an idle shell command (e.g. `sleep infinity`) so the container stays up and is accessible from the Coolify UI terminal. The DEM pipeline itself is run manually via `/docker-entry.sh` inside the container.
+
+To generate or update DEM data in production:
+
+1. In Coolify, open the **terminal for the `dem-tools` service**.
+2. From the shell prompt inside the container, run one of:
+   - `./docker-entry.sh all` — full pipeline (download → process → manifest).
+   - `./docker-entry.sh download` — download tiles into `/workspace/raw` only.
+   - `./docker-entry.sh process` — process raw tiles from `/workspace/raw` into `/workspace/output`.
+   - `./docker-entry.sh manifest` — regenerate `manifest.json` in `/workspace/output`.
+3. **Raw files:** Written under `/workspace/raw` (host: `/srv/tracker/dem-data/raw`).
+4. **Processed output:** Decompressed tiles and `manifest.json` under `/workspace/output` (host: `/srv/tracker/dem-data/output`).
+5. To verify success from the Coolify terminal, run:
+   - `ls -1 /workspace/raw` — should list raw `.tif` files.
+   - `ls -1 /workspace/output` — should list processed `.tif` files and `manifest.json`.
+6. Web and worker already mount `/srv/tracker/dem-data/output:/data/dem:ro`, so they automatically consume the generated DEM data once those files exist.

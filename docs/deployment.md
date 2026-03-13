@@ -13,9 +13,10 @@ This document explains how to run and deploy the app with Docker and Coolify. Th
 | **web**    | Next.js app; all browser and API traffic   | Yes        |
 | **worker** | Enrichment job runner; polls PocketBase    | Yes        |
 | **pocketbase** | Database, auth, file storage            | Yes        |
+| **dem-tools** | DEM maintenance tooling (non-runtime)    | Yes        |
 
 - **Same image** runs web and worker (different `command` in compose).
-- All three services use a single **internal Docker network** (`tracker`) for communication. Web and worker call PocketBase at `http://pocketbase:8090`.
+- All four services use a single **internal Docker network** (`tracker`) for communication. Web and worker call PocketBase at `http://pocketbase:8090`. The `dem-tools` service shares the same network but is used only for internal DEM generation via the Coolify UI terminal.
 
 ---
 
@@ -26,6 +27,7 @@ This document explains how to run and deploy the app with Docker and Coolify. Th
 | **web**    | **Yes** (port 3000) | Only service that should receive public traffic. Cloudflare Tunnel points here. |
 | **worker** | **No** (no ports)   | Runs inside the stack; no HTTP server. |
 | **pocketbase** | **No** (no ports) | Internal-only. Never expose to the internet. Admin uses LAN or WireGuard. |
+| **dem-tools** | **No** (no ports) | Internal-only DEM tooling container. Used via Coolify terminal to generate DEM data; never public. |
 
 The browser talks only to the web service. PocketBase is never contacted directly by the public.
 
@@ -67,12 +69,13 @@ Stop: `docker compose down`. Data in the `pb_data` volume persists unless you ru
 ## Deploy the stack in Coolify
 
 1. Use the repo’s **docker-compose.yml** as the source of truth.
-2. In Coolify, create or import a stack with three services:
+2. In Coolify, create or import a stack with four services:
    - **web** — Build from repo root (context `.`, Dockerfile `Dockerfile`). Command: `pnpm start`. Expose port **3000** (this is the only service that should be reachable by the tunnel).
    - **worker** — Same image as web. Command: `node --import tsx scripts/enrichment-worker.ts`. **Do not** expose any ports.
    - **pocketbase** — Build from `apps/pb` (context `./apps/pb`, Dockerfile `Dockerfile`). **Do not** expose any ports. Attach a persistent volume for **pb_data** at `/app/pb_data`.
+   - **dem-tools** — Build from `tools/dem` (context `./tools/dem`, Dockerfile `Dockerfile`). **Do not** expose any ports. Mount your DEM base directory (e.g. `/srv/tracker/dem-data/raw` → `/workspace/raw`, `/srv/tracker/dem-data/output` → `/workspace/output`). Command can be a simple idle command such as `sleep infinity` so the container stays available for terminal access.
 3. Set environment variables as in the table above. Ensure `NEXT_PUBLIC_PB_URL=http://pocketbase:8090` for both web and worker.
-4. If using DEM, mount the DEM output directory read-only for web and worker and set `DEM_BASE_PATH` and `DEM_MANIFEST_PATH`.
+4. If using DEM, mount the DEM output directory read-only for web and worker (e.g. `/srv/tracker/dem-data/output:/data/dem:ro`) and set `DEM_BASE_PATH` and `DEM_MANIFEST_PATH`.
 5. Do **not** add cloudflared to this stack; the tunnel is configured separately (see below).
 
 ---
