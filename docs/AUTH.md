@@ -11,7 +11,7 @@ The web app uses PocketBase for auth. Log in on the GPX page to upload, list, en
 
 ## Log in
 
-1. Open the GPX Viewer (e.g. http://localhost:3000/gpx).
+1. Open the GPX Viewer (e.g. http://localhost:3000).
 2. If you are not logged in, the login form is shown.
 3. Enter the **email** and password of the PocketBase user and click **Sign in**.
 4. The app stores the session in a cookie so list/upload/enrich/delete work as that user.

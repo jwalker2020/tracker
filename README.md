@@ -55,7 +55,7 @@ pnpm dev
 
 ## GPX Viewer
 
-The **GPX Viewer** at `/gpx` lets you upload GPX files, store them in PocketBase, and view one or more tracks on a Leaflet map (OpenStreetMap or USGS Topo).
+The **GPX Viewer** at `/` lets you upload GPX files, store them in PocketBase, and view one or more tracks on a Leaflet map (OpenStreetMap or USGS Topo).
 
 ### PocketBase collection for GPX
 
@@ -136,7 +136,7 @@ Then in Admin (e.g. http://localhost:8090/_/) ensure the **users** collection ex
 
 **4. Test in the app**
 
-- Open http://localhost:3000 → go to `/gpx`, log in with that user.
+- Open http://localhost:3000, log in with that user.
 - Upload a GPX that has tracks in New Hampshire (within the DEM coverage).
 - Start enrichment.
 - In logs you should see DEM usage instead of “no DEM”:
