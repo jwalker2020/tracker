@@ -156,8 +156,22 @@ function FitToSelection({
     for (let i = 1; i < boundsList.length; i++) {
       combined.extend(boundsList[i]!);
     }
-    const sw = combined.getSouthWest();
-    const ne = combined.getNorthEast();
+    // Slightly shrink bounds toward center so fitBounds zooms in a bit (less margin, between no zoom and +1 level).
+    const shrink = 0.9;
+    const south = combined.getSouth();
+    const north = combined.getNorth();
+    const west = combined.getWest();
+    const east = combined.getEast();
+    const cLat = (south + north) / 2;
+    const cLng = (west + east) / 2;
+    const halfLat = ((north - south) / 2) * shrink;
+    const halfLng = ((east - west) / 2) * shrink;
+    const boundsToFit = L.latLngBounds(
+      [cLat - halfLat, cLng - halfLng],
+      [cLat + halfLat, cLng + halfLng]
+    );
+    const sw = boundsToFit.getSouthWest();
+    const ne = boundsToFit.getNorthEast();
     const container = map.getContainer();
     const rect = container?.getBoundingClientRect?.();
     const padding = 4;
@@ -181,7 +195,7 @@ function FitToSelection({
           }
         : { padding: L.point(padding, padding) }),
     };
-    map.fitBounds(combined, fitOptions);
+    map.fitBounds(boundsToFit, fitOptions);
   }, [map, fitToSelectionTrigger, bottomPaddingPx, maxZoom, visibleTrackKeys]);
   return null;
 }
