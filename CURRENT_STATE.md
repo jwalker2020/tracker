@@ -6,8 +6,8 @@ Concise status for maintainers and contributors. Update as the project evolves.
 
 ## Recent changes
 
-- **Artifact-backed enrichment:** Sync and async enrichment both use the same persistence model. Full detail (per-track profiles) is stored in **`enrichment_artifacts`** (NDJSON); **`gpx_files`** holds only summaries (`enrichedTracksSummary`), `hasEnrichmentArtifact`, and `enrichmentArtifactIndex` (byte offsets per track). Artifact is streamed to a temp file then uploaded to PocketBase; `gpx_files` is updated only after artifact success. Inline `enrichedTracksJson` is no longer the primary path (cleared when artifact is used). Large sync jobs are rerouted to async.
-- **Read path:** List/filter/selection use summary data only. Detailed track/profile data is loaded per track via **`GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`**. No full-artifact fetch. Charts depend on successful per-track artifact load; failed loads show “Elevation profile not available” with bounded retry.
+- **Artifact-backed enrichment:** Sync and async use the **same storage model**. **`gpx_files`** = summary only; full detail in **`enrichment_artifacts`** (NDJSON; each line = one track). Index `{ trackIndex, start, length }` on `gpx_files`; artifact API returns **one track slice only** (Range when backend supports it, else server fetches artifact and slices in memory). Write: stream to temp NDJSON → stream upload to PocketBase → then update `gpx_files`. Inline `enrichedTracksJson` cleared when artifact is used. **Sync vs async:** Sync enrichment is used only for small files; files exceeding approximately **15,000 points** or **50 tracks** (`SYNC_MAX_POINTS`, `SYNC_MAX_TRACKS`) are **automatically rerouted to async** worker processing.
+- **Read path:** List/filter/selection use **summary only**. Chart detail: client requests **per-track slice** (`GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`) on demand. No full-artifact fetch. “Elevation profile not available” → missing `hasEnrichmentArtifact`, failed request, parse failure, or not yet loaded.
 - **Regression fix:** File list now correctly exposes `hasEnrichmentArtifact` to the client (`gpxRecordToDisplay` in `lib/gpx/files.ts`), so the UI requests the artifact slice and profiles can load after enrichment.
 - **Production deployment (Docker Compose / Coolify):** Approved model documented in `docs/PRODUCTION_DEPLOYMENT.md` and `docs/deployment.md`. Web only public; worker and PocketBase internal-only. PocketBase data in volume `pb_data`; admin via LAN or WireGuard.
 - **Worker-based enrichment:** Async jobs run only in a separate worker process/container. Web creates jobs and returns `jobId`; worker polls and runs `runEnrichmentJob`. No in-process runner or startup resume in the web app.
@@ -27,16 +27,16 @@ Concise status for maintainers and contributors. Update as the project evolves.
 
 - **Checkpoint / progress**: Depends on PocketBase `enrichment_jobs` schema. If migrations were not run, checkpoint lookup can throw; enrich route logs “run migrations?” and continues without resume. **Progress and checkpoint writes are best-effort**: failures are logged; enrichment continues (no retry or block).
 - **RangeFilter**: Drag state kept in refs and a tick to avoid parent re-renders resetting handles; subtle if parent state or bounds change during drag.
-- **Enrichment worker:** Must be run separately (or as a separate container in Docker/Coolify); web app does not run jobs. Worker runs one job at a time per process; progress/cancel state is **PocketBase-backed**. In production, worker has no HTTP server and must not be exposed publicly.
+- **Enrichment worker:** Runs separately (or as separate container). Web does not run jobs. **Worker processes jobs sequentially** (one job at a time per process). Progress/cancel are PocketBase-backed. In production, worker has no HTTP server; internal-only.
 - **Per-track artifact fetch**: Can fail independently (network, 4xx/5xx, parse error). Client has bounded retry (cooldown after failure); UI shows “Elevation profile not available for this track.” If the file list never gets `hasEnrichmentArtifact: true` (e.g. list not refetched after job complete), the client never requests the slice. See PROJECT_CONTEXT.md “Debugging enrichment and profiles.”
-- **Artifact upload limits**: PocketBase request/body limits apply to artifact file upload. Very large files may fail; no chunked multi-file artifact design yet.
+- **Artifact upload limits:** PocketBase request/body limits apply. Very large artifacts may fail; no chunked multi-file design. Optional guardrail (e.g. `ENRICHMENT_ARTIFACT_MAX_BYTES`) is not implemented but could cap artifact size.
 
 ---
 
 ## Current workarounds
 
 - **Auth in dev**: Optional **`GUEST_USER_ID`** env lets the app work without a real login cookie; **dev-only**, not for production.
-- **Delete despite cancel failure**: DELETE `/api/gpx/files/[id]` still deletes the record if cancelling the enrichment job fails (cancel is best-effort).
+- **Delete vs cancel:** `DELETE /api/gpx/files/[id]` deletes the file record even if cancelling the active enrichment job fails. Cancel is best-effort (e.g. job record not found); the file is still removed so the UI stays consistent.
 - **Progress writes**: Throttled; worker continues enrichment even if `updateJobProgress` or checkpoint save fails (logged only).
 - **DEM logging**: Some DEM messages use `process.stderr.write`; fallback to `console.warn` when stderr is unavailable.
 

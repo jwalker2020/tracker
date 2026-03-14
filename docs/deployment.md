@@ -2,7 +2,7 @@
 
 This document explains how to run and deploy the app with Docker and Coolify. The **Docker Compose** file in the repo root is the source of truth.
 
-**Production target:** Server runs Docker; Coolify manages containers. Public users access **https://tracker.nhwalker.net** via a **Cloudflare Tunnel**. Only the web service is reachable externally. PocketBase and the worker are internal-only. Admin reaches PocketBase via local network or WireGuard.
+**Production target:** Server runs Docker; Coolify manages containers. Public users access **https://tracker.nhwalker.net** via a **Cloudflare Tunnel**. **Web is the only public service** (port 3000). **Worker and PocketBase are internal-only** — no public hostname, tunnel, or exposed port. **PocketBase admin is LAN or WireGuard only.** The **browser never talks to PocketBase directly**; all requests go through the Next.js app (same-origin). In Docker/Coolify, set **`NEXT_PUBLIC_PB_URL=http://pocketbase:8090`** (internal hostname) for web and worker.
 
 ---
 
@@ -55,7 +55,7 @@ Set in `docker-compose.yml` or in Coolify for each service:
 Sync and async enrichment both write full detail to the **`enrichment_artifacts`** collection (NDJSON file per GPX file) and then update **`gpx_files`** with `hasEnrichmentArtifact`, `enrichmentArtifactIndex`, and `enrichedTracksSummary`. The worker and the sync enrich API create/update records in `enrichment_artifacts`. So that they can do this without admin auth, the collection rules are relaxed for server-only access:
 
 1. **Run migrations**  
-   Migrations run automatically when the PocketBase container starts (see `apps/pb/start-pocketbase.sh`). The migration `1790000006_enrichment_artifacts_allow_server_api.js` sets `listRule`, `viewRule`, `createRule`, and `updateRule` to empty string (`""`), which in PocketBase means “anyone can perform the action” (guests, authenticated users, admins).
+   Migrations run **automatically** when the PocketBase container starts: `apps/pb/start-pocketbase.sh` runs `pocketbase migrate up` before starting the server. Ensure the image includes `pb_migrations/` and the startup script. The migration `1790000006_enrichment_artifacts_allow_server_api.js` sets `listRule`, `viewRule`, `createRule`, and `updateRule` to empty string (`""`), which in PocketBase means “anyone can perform the action” (guests, authenticated users, admins).
 
 2. **If you deploy without the new migration**  
    - Build and deploy the PocketBase image that includes the new migration (from `apps/pb`).  

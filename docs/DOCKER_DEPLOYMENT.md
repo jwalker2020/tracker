@@ -35,8 +35,8 @@ Run `docker compose ps` to confirm only the **web** service shows a host port (3
 
 ## PocketBase is internal-only
 
-- The **public browser never** talks to PocketBase directly. Geometry, auth, and file requests go through the Next.js app (same origin).
-- Web and worker talk to PocketBase on the Docker network at `http://pocketbase:8090` (configured via `NEXT_PUBLIC_PB_URL` in this stack). The browser does not call PocketBase directly.
+- The **browser never talks to PocketBase directly**. All geometry, auth, file, and enrichment-artifact requests go through the Next.js app (same-origin). Set **`NEXT_PUBLIC_PB_URL=http://pocketbase:8090`** in Docker/Coolify for web and worker (internal hostname only).
+- Web and worker talk to PocketBase on the Docker network at that URL. Only the **web** service receives public traffic; worker and PocketBase are internal-only.
 - **Cloudflare Tunnel (production):** Point `https://tracker.nhwalker.net` **only** at the **web** service. Do **not** create a public hostname or tunnel for PocketBase. Admin access: SSH port-forward to localhost (recommended) or LAN/WireGuard-restricted host port — see deployment docs.
 
 ## Environment variables

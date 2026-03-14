@@ -43,7 +43,7 @@
 |---|------|-------------|----------------|-------|-------|
 | P1 | PocketBase image or binary | Provide PocketBase in a container (official image, or Dockerfile that downloads the binary for the target arch). | PB must run in the same stack. | Blocker | 6 |
 | P2 | PocketBase data volume | Persistent volume for `pb_data/` (and correct working dir so PB writes there). | Data and migrations must survive restarts. | Blocker | 7 |
-| P3 | PocketBase migrations in image | Include `pb_migrations/` in the PB container or mount so `serve` or `migrate up` runs migrations. | Schema must exist for gpx_files, enrichment_jobs, etc. | Blocker | 8 |
+| P3 | PocketBase migrations in image | Include `pb_migrations/` and `start-pocketbase.sh` so migrations run automatically on container start (`pocketbase migrate up` before serve). | Schema must exist for gpx_files, enrichment_jobs, enrichment_artifacts, etc. | Blocker | 8 |
 | P4 | PocketBase bind address | Ensure PB listens on `0.0.0.0` (or the right interface) so web and worker containers can reach it. | Other containers resolve PB by service name. | Blocker | 9 |
 | P5 | No public exposure of PB | Do not expose PocketBase port to the internet; only to local network / Docker network. Coolify/tunnel must not proxy PB. | Keeps PB internal-only. | Blocker | 10 |
 

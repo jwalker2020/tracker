@@ -1,8 +1,10 @@
 # Production deployment (final approved model)
 
-Deploy with **Docker Compose** or **Coolify**. Public access only at **https://tracker.nhwalker.net** via a **Cloudflare Tunnel**. PocketBase and worker are **internal-only**. Admin accesses PocketBase via **LAN or WireGuard** only.
+Deploy with **Docker Compose** or **Coolify**. Public access only at **https://tracker.nhwalker.net** via a **Cloudflare Tunnel**.
 
-**PocketBase and worker must not be publicly exposed.** No tunnel, public hostname, or open firewall port for them. Only the web service receives public traffic.
+- **Web is the only public service** (port 3000). **Worker and PocketBase are internal-only** — no tunnel, public hostname, or exposed port.
+- **PocketBase admin is LAN or WireGuard only** (e.g. host port 8090 bound to LAN IP via `POCKETBASE_LAN_IP`).
+- **Browser uses same-origin app routes only**; it never talks to PocketBase directly. Set **`NEXT_PUBLIC_PB_URL=http://pocketbase:8090`** (internal hostname) for web and worker in Docker/Coolify.
 
 ---
 
@@ -45,6 +47,7 @@ Deploy with **Docker Compose** or **Coolify**. Public access only at **https://t
 
 - Do **not** set `GUEST_USER_ID` in production; use real auth only.
 - Worker gets all config from container env (no `.env.local`).
+- **PocketBase migrations** run automatically on container startup (`apps/pb/start-pocketbase.sh` runs `pocketbase migrate up`). Ensure the PocketBase image includes `pb_migrations/` and the startup script.
 
 ---
 

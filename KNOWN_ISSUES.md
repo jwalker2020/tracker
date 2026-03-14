@@ -14,7 +14,7 @@ Last updated: 2026-03-10
 
 - **Very large artifacts can exceed PocketBase upload limits**
   - Full enrichment detail is stored in `enrichment_artifacts` (NDJSON file). PocketBase request/body limits apply to the artifact file upload.
-  - Very large files (many tracks or very long tracks) may hit limits; the worker logs upload success or failure. No chunked multi-file artifact design yet.
+  - Very large files (many tracks or very long tracks) may hit limits; the worker logs upload success or failure. No chunked multi-file artifact design yet. An **optional guardrail** `ENRICHMENT_ARTIFACT_MAX_BYTES` (if implemented later) would limit artifact size before upload; not currently in code.
 
 - **GPX elevation units**
   - GPX elevation is assumed to be in meters (per GPX 1.1); there is no detection or conversion for feet.
@@ -24,11 +24,13 @@ Last updated: 2026-03-10
 ## Performance / Scalability
 
 - **List payload**
-  - `GET /api/gpx/files` returns summary data only (`enrichedTracksSummary`, `hasEnrichmentArtifact`). Full profile data is loaded per track via `GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`, so list size is bounded.
+  - `GET /api/gpx/files` returns **summary only**; full profile data is loaded **per track** via `GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`, so list size is bounded.
 
-- **Single job per worker process**
-  - The enrichment worker runs one job at a time per process.
-  - Multiple concurrent jobs require additional worker processes.
+- **Worker concurrency**
+  - Each worker process runs **one job at a time**. Horizontal scaling requires **multiple worker containers** (or a queue); a single worker handles jobs sequentially.
+
+- **Browser parsing cost (per-track slice)**
+  - The client parses the per-track artifact slice as JSON text in the main thread. Extremely large tracks may cause slow parsing or high memory use in the browser; consider capping profile points in enrichment if this becomes an issue.
 
 ---
 
@@ -52,20 +54,21 @@ Last updated: 2026-03-10
 - **Guest auth is dev-only**
   - `GUEST_USER_ID` is a dev fallback when no login cookie is present; it is not for production use.
 
-- **Delete despite cancel failure**
-  - `DELETE /api/gpx/files/[id]` still deletes the record if cancelling the enrichment job fails (cancel is best-effort).
+- **Delete vs cancel behavior**
+  - Deleting a file still proceeds even if cancelling the enrichment job fails. `DELETE /api/gpx/files/[id]` removes the file record; cancel is best-effort (e.g. job not found). The worker may still be running the job until it checks cancellation.
 
 ---
 
 ## Fragile Areas in the Code
 
+- **Artifact / index mismatch risk**
+  - If the artifact file and `enrichmentArtifactIndex` diverge (e.g. artifact replaced or corrupted without updating the index, or index edited incorrectly), slice reads may fail or return wrong data. `gpx_files` is updated only after a successful artifact upload to keep them in sync; manual DB edits or partial failures can still leave them inconsistent.
+
 - **RangeFilter drag logic**
-  - Uses refs and a manual tick to avoid React re-renders resetting the slider handles during drag.
-  - Can be subtle if parent state or bounds change while dragging.
+  - Uses refs and a manual tick to avoid React re-renders resetting the slider handles during drag. Can be subtle if parent state or bounds change while dragging.
 
 - **Checkpoint / progress persistence**
-  - Progress and checkpoint writes are best-effort; failures are logged but enrichment continues (no retry or block).
-  - Throttled writes; worker does not stop if `updateJobProgress` or checkpoint save fails.
+  - Progress and checkpoint writes are best-effort; failures are logged but enrichment continues (no retry or block). Throttled writes; worker does not stop if `updateJobProgress` or checkpoint save fails.
 
 ---
 
@@ -85,6 +88,17 @@ Last updated: 2026-03-10
 - **Cause**: Charts need per-track detail from `GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`. The message appears when (1) the file list never had `hasEnrichmentArtifact: true` (list not refetched after enrichment, or list API not passing the flag), (2) the artifact request failed (4xx/5xx or network), or (3) the slice response failed to parse.
 - **Checks**: In the browser Network tab, confirm a request to `.../enrichment-artifact?trackIndex=...` for the selected track (not only `.../file`). If the artifact request never appears, the file in client state likely lacks `hasEnrichmentArtifact` — refetch the file list or refresh. Check console for “[MapView] Per-track artifact fetch failed” or “parse failed”; failed loads are retried after a cooldown.
 - **Full guide**: See **PROJECT_CONTEXT.md** section “Debugging enrichment and profiles” for persistence, artifact slice API, and client loading.
+
+---
+
+## Observability and logging (where to look first)
+
+**Useful log prefixes:** **worker** `[DEM]`, **artifact API** `[enrichment-artifact]`, **client** `[MapView]`.
+
+- **Worker logs:** `[DEM] Enrichment worker loop started`, `[DEM] Worker claimed job`, `[DEM] Artifact persisted`, `[DEM] Enrichment results saved`, `[DEM] Job completed`. Failures: upload errors, "Enrichment results saved" missing.
+- **Artifact API logs:** `[enrichment-artifact] upload complete` (during write); slice route logs range vs full fetch, 4xx/5xx. If Range not supported: `[enrichment-artifact] Range requests not supported by backend` (once).
+- **Client (MapView) logs:** Browser Network tab — same-origin only (no direct PocketBase). Expect `.../enrichment-artifact?trackIndex=...` when a track with `hasEnrichmentArtifact` is selected. Console: `[MapView] Per-track artifact fetch failed` or `parse failed` on slice failure.
+- **Full debugging guide:** **PROJECT_CONTEXT.md** "Debugging enrichment and profiles."
 
 ---
 
