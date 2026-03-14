@@ -84,7 +84,7 @@ export async function runEnrichmentJob(
     lastCancelCheckMs = now;
     cancelFetchesActual++;
     const cp = await getCheckpointByRecordId(pb, recordId);
-    cachedCancelled = cp?.status === "cancelled" ?? false;
+    cachedCancelled = cp?.status === "cancelled";
     return cachedCancelled;
   };
 
