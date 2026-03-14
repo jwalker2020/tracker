@@ -91,11 +91,14 @@ const DEFAULT_FIT_MAX_ZOOM = 19;
 
 function FitToSelection({
   files,
+  visibleTrackKeys,
   fitToSelectionTrigger,
   bottomPaddingPx = 0,
   maxZoom = DEFAULT_FIT_MAX_ZOOM,
 }: {
   files: GpxFileRecordForDisplay[];
+  /** When set, fit to bounds of these tracks only (so large files zoom to visible tracks, not whole file). */
+  visibleTrackKeys?: Set<string> | null;
   fitToSelectionTrigger: number;
   /** When > 0, fitBounds uses this as bottom padding so bounds fit in the visible map above the panel. */
   bottomPaddingPx?: number;
@@ -105,21 +108,53 @@ function FitToSelection({
   const map = useMap();
   const filesRef = useRef(files);
   filesRef.current = files;
+  const visibleTrackKeysRef = useRef(visibleTrackKeys);
+  visibleTrackKeysRef.current = visibleTrackKeys;
   useEffect(() => {
     if (fitToSelectionTrigger === 0) return;
     const currentFiles = filesRef.current;
+    const visible = visibleTrackKeysRef.current;
     if (currentFiles.length === 0) return;
     const boundsList: L.LatLngBounds[] = [];
-    for (const f of currentFiles) {
-      const b = parseBoundsJson(f.boundsJson);
-      if (b) boundsList.push(b);
+    // Prefer bounds of visible tracks only so large files zoom to what's on screen, not the whole file.
+    if (visible != null && visible.size > 0) {
+      for (const f of currentFiles) {
+        const tracks = f.enrichedTracks;
+        if (!tracks?.length) {
+          const b = parseBoundsJson(f.boundsJson);
+          if (b) boundsList.push(b);
+          continue;
+        }
+        for (let i = 0; i < tracks.length; i++) {
+          const key = `${f.id}-${i}`;
+          if (!visible.has(key)) continue;
+          const t = tracks[i];
+          const b = t?.bounds;
+          if (
+            b &&
+            typeof b.south === "number" &&
+            typeof b.west === "number" &&
+            typeof b.north === "number" &&
+            typeof b.east === "number"
+          ) {
+            boundsList.push(L.latLngBounds([b.south, b.west], [b.north, b.east]));
+          }
+        }
+      }
+    }
+    if (boundsList.length === 0) {
+      for (const f of currentFiles) {
+        const b = parseBoundsJson(f.boundsJson);
+        if (b) boundsList.push(b);
+      }
     }
     if (boundsList.length === 0) return;
-    const combined = boundsList[0]!;
+    const first = boundsList[0]!;
+    const combined = L.latLngBounds(first.getSouthWest(), first.getNorthEast());
     for (let i = 1; i < boundsList.length; i++) {
       combined.extend(boundsList[i]!);
     }
-    // Small padding so selected files fill the map tightly (was 24, left too much empty space).
+    // Small padding so selection fills the map tightly.
     const padding = 12;
     const fitOptions: L.FitBoundsOptions = {
       maxZoom,
@@ -131,7 +166,7 @@ function FitToSelection({
         : { padding: L.point(padding, padding) }),
     };
     map.fitBounds(combined, fitOptions);
-  }, [map, fitToSelectionTrigger, bottomPaddingPx, maxZoom]);
+  }, [map, fitToSelectionTrigger, bottomPaddingPx, maxZoom, visibleTrackKeys]);
   return null;
 }
 
@@ -898,6 +933,7 @@ export function MapView({
           <MapHoverMarker hoveredLatLng={hoveredLatLng} />
           <FitToSelection
             files={files}
+            visibleTrackKeys={visibleTrackKeys}
             fitToSelectionTrigger={fitToSelectionTrigger}
             bottomPaddingPx={selectedTrack ? BOTTOM_PANEL_HEIGHT_PX : 0}
             maxZoom={basemap.maxZoom ?? DEFAULT_FIT_MAX_ZOOM}
