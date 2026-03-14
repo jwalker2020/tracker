@@ -80,6 +80,8 @@ export type DemEnrichmentConfig = {
   onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
   /** Optional; when true, the pipeline should exit cleanly without writing results. Sync or async. */
   isCancelled?: () => boolean | Promise<boolean>;
+  /** When set, called after each track with its summary; pipeline does not retain full enrichedTracks array (memory-safe). */
+  onTrackComplete?: (summary: EnrichedTrackSummary) => void;
 };
 
 /** Lightweight profile: cumulative distance (m), elevation (m), and map coords per point. */
@@ -955,6 +957,35 @@ function computeAggregates(tracks: EnrichedTrackSummary[]): EnrichmentAggregates
   };
 }
 
+/** Merge one track into running aggregates (for incremental / memory-safe mode). */
+function mergeTrackIntoAggregates(
+  acc: EnrichmentAggregates,
+  t: EnrichedTrackSummary
+): EnrichmentAggregates {
+  const distanceM = acc.distanceM + t.distanceM;
+  const totalAscentM = acc.totalAscentM + t.totalAscentM;
+  const totalDescentM = acc.totalDescentM + t.totalDescentM;
+  let minElevationM = acc.minElevationM;
+  let maxElevationM = acc.maxElevationM;
+  if (t.validCount > 0) {
+    minElevationM = Math.min(minElevationM, t.minElevationM);
+    maxElevationM = Math.max(maxElevationM, t.maxElevationM);
+  }
+  const netElevationM = totalAscentM - totalDescentM;
+  const totalClimbM = totalAscentM + totalDescentM;
+  const rawGrade = distanceM > 0 ? (netElevationM / distanceM) * 100 : 0;
+  const rawSteepness = distanceM > 0 ? (totalClimbM / distanceM) * 100 : 0;
+  return {
+    distanceM,
+    minElevationM: Number.isFinite(minElevationM) ? minElevationM : 0,
+    maxElevationM: Number.isFinite(maxElevationM) ? maxElevationM : 0,
+    totalAscentM,
+    totalDescentM,
+    averageGradePct: Number.isFinite(rawGrade) ? rawGrade : 0,
+    averageSteepnessPct: Number.isFinite(rawSteepness) ? rawSteepness : 0,
+  };
+}
+
 const M_TO_FT = 3.28084;
 const M_TO_MI = 1 / 1609.344;
 
@@ -1187,6 +1218,10 @@ function toEnrichedTrackSummary(
 export type PerTrackEnrichmentResult = {
   enrichedTracks: EnrichedTrackSummary[];
   aggregates: EnrichmentAggregates;
+  /** Set when onTrackComplete was used (no array retained). */
+  trackCount?: number;
+  totalPoints?: number;
+  hasAnyValidData?: boolean;
 };
 
 /**
@@ -1265,7 +1300,28 @@ export async function enrichGpxWithDemPerTrack(
   let completedPoints = 0;
   let totalResampleMs = 0;
   let totalPostSampleMs = 0;
-  const enrichedTracks: EnrichedTrackSummary[] = [];
+  const useStreaming = Boolean(config.onTrackComplete);
+  const enrichedTracks: EnrichedTrackSummary[] = useStreaming ? [] : [];
+  let runningAggregates: {
+    distanceM: number;
+    minElevationM: number;
+    maxElevationM: number;
+    totalAscentM: number;
+    totalDescentM: number;
+    averageGradePct: number;
+    averageSteepnessPct: number;
+  } = {
+    distanceM: 0,
+    minElevationM: Infinity,
+    maxElevationM: -Infinity,
+    totalAscentM: 0,
+    totalDescentM: 0,
+    averageGradePct: 0,
+    averageSteepnessPct: 0,
+  };
+  let trackCount = 0;
+  let totalPointsOut = 0;
+  let hasAnyValidData = false;
   const sharedSampler = new DemRasterSampler(index.basePath);
 
   const demLog = (msg: string): void => {
@@ -1340,7 +1396,16 @@ export async function enrichGpxWithDemPerTrack(
         totalResampleMs += result._timing.resampleMs;
         totalPostSampleMs += result._timing.postSampleMs;
       }
-      enrichedTracks.push(toEnrichedTrackSummary(track, result));
+      const summary = toEnrichedTrackSummary(track, result);
+      if (useStreaming) {
+        runningAggregates = mergeTrackIntoAggregates(runningAggregates, summary);
+        trackCount += 1;
+        totalPointsOut += result.stats.totalCount;
+        if (summary.validCount > 0) hasAnyValidData = true;
+        config.onTrackComplete!(summary);
+      } else {
+        enrichedTracks.push(summary);
+      }
       completedPoints += result.stats.totalCount;
     }
   } finally {
@@ -1353,6 +1418,20 @@ export async function enrichGpxWithDemPerTrack(
     sharedSampler.closeAll();
   }
 
+  if (useStreaming) {
+    const agg: EnrichmentAggregates = {
+      ...runningAggregates,
+      minElevationM: Number.isFinite(runningAggregates.minElevationM) ? runningAggregates.minElevationM : 0,
+      maxElevationM: Number.isFinite(runningAggregates.maxElevationM) ? runningAggregates.maxElevationM : 0,
+    };
+    return {
+      enrichedTracks: [],
+      aggregates: agg,
+      trackCount,
+      totalPoints: totalPointsOut,
+      hasAnyValidData,
+    };
+  }
   const aggregates = computeAggregates(enrichedTracks);
   return { enrichedTracks, aggregates };
 }

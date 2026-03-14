@@ -34,10 +34,11 @@ services:
 
   worker:
     image: tracker-web:latest
-    # Keep the worker bounded so DEM jobs cannot exhaust host RAM.
-    # Node heap is capped below the container memory limit so failures stay contained.
-    mem_limit: 4g
-    memswap_limit: 4g
+    deploy:
+      replicas: 1
+    # Bounded memory: heap below limit so OOM is contained; swap allows headroom during DEM peaks.
+    mem_limit: 6g
+    memswap_limit: 8g
     environment:
       NEXT_PUBLIC_PB_URL: http://pocketbase:8090
       DEM_BASE_PATH: /data/dem

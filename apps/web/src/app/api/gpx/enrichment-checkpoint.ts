@@ -384,8 +384,48 @@ export async function getIncompleteEnrichmentJobs(
   }
 }
 
+/** If a job has been "running" with no heartbeat for this long, treat it as dead (e.g. worker OOM). */
+export const STALE_HEARTBEAT_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Mark a job as failed due to stale heartbeat (worker died or hung). Idempotent for same record.
+ * Only "running" jobs are ever considered stale; "resumable" jobs are retried from scratch by the worker.
+ */
+export async function markJobStaleAndFailed(
+  pb: PocketBase,
+  job: EnrichmentCheckpointRecord,
+  reason: string = "Worker timeout (no heartbeat). Job will not be retried automatically."
+): Promise<void> {
+  try {
+    const now = pbDateString(new Date());
+    await pb.collection(COLLECTION).update(job.id, {
+      status: "failed",
+      error: reason,
+      errorMessage: reason,
+      updatedAt: now,
+      lastHeartbeatAt: now,
+    });
+  } catch (e) {
+    console.warn("[enrichment-checkpoint] Failed to mark stale job:", job.jobId, e);
+  }
+}
+
+/**
+ * Return true if the job is running but lastHeartbeatAt is older than STALE_HEARTBEAT_MS.
+ * Resumable jobs are not stale; they are picked up and run from scratch.
+ */
+export function isJobStale(job: EnrichmentCheckpointRecord): boolean {
+  if (job.status !== "running") return false;
+  const raw = job.lastHeartbeatAt;
+  if (!raw || typeof raw !== "string") return true;
+  const t = new Date(raw).getTime();
+  if (!Number.isFinite(t)) return true;
+  return Date.now() - t > STALE_HEARTBEAT_MS;
+}
+
 /**
  * Return one claimable job for the worker, or null. Claimable = running or resumable.
+ * Does not mark stale jobs; caller should check isJobStale() and call markJobStaleAndFailed() then skip.
  * Caller must claim by calling updateJobProgress(..., { status: "running" }, job.id) then run the executor.
  * Only one worker process should run when using this (no Redis/lock).
  */

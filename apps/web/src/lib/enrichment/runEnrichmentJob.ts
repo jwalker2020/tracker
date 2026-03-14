@@ -34,6 +34,27 @@ export function demLog(msg: string): void {
   }
 }
 
+/** Options passed by the worker for instrumentation (memory logging, etc.). */
+export type RunEnrichmentJobOptions = {
+  jobId: string;
+  recordId: string;
+};
+
+const MEMORY_LOG_INTERVAL_MS = 8_000;
+
+function logMemoryUsage(context: { jobId: string; recordId: string }): void {
+  try {
+    const u = process.memoryUsage();
+    demLog(
+      `Memory jobId=${context.jobId} recordId=${context.recordId} ` +
+        `rss=${Math.round(u.rss / 1024 / 1024)}MB heapUsed=${Math.round(u.heapUsed / 1024 / 1024)}MB ` +
+        `heapTotal=${Math.round(u.heapTotal / 1024 / 1024)}MB external=${Math.round((u.external ?? 0) / 1024 / 1024)}MB`
+    );
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Execute a single enrichment job. Loads job/checkpoint by jobId, validates state,
  * loads GPX, runs DEM enrichment, writes progress, handles cancellation, writes
@@ -42,7 +63,8 @@ export function demLog(msg: string): void {
  */
 export async function runEnrichmentJob(
   pb: PocketBase,
-  jobId: string
+  jobId: string,
+  options?: RunEnrichmentJobOptions | null
 ): Promise<void> {
   const job = await getJobByJobId(pb, jobId);
   if (!job) {
@@ -55,6 +77,7 @@ export async function runEnrichmentJob(
 
   const recordId = job.recordId;
   const checkpointRecordId = job.id;
+  const logContext = options ?? { jobId, recordId };
 
   const demBasePath = process.env.DEM_BASE_PATH?.trim();
   const baseUrl = process.env.NEXT_PUBLIC_PB_URL ?? "";
@@ -64,6 +87,7 @@ export async function runEnrichmentJob(
   let cancelFetchesActual = 0;
   let lastCancelCheckMs = 0;
   let cachedCancelled: boolean | null = null;
+  let memoryLogIntervalId: ReturnType<typeof setInterval> | null = null;
 
   const writeProgress = async (update: Parameters<typeof updateJobProgress>[2]) => {
     try {
@@ -132,6 +156,11 @@ export async function runEnrichmentJob(
     });
 
     enhancementStartMs = Date.now();
+    logMemoryUsage(logContext);
+    memoryLogIntervalId = setInterval(() => logMemoryUsage(logContext), MEMORY_LOG_INTERVAL_MS);
+
+    let enrichedTracksJson = "[";
+    let firstTrack = true;
     let result: Awaited<ReturnType<typeof enrichGpxWithDemPerTrack>>;
     try {
       result = await enrichGpxWithDemPerTrack(gpxText, {
@@ -155,8 +184,17 @@ export async function runEnrichmentJob(
             overallPercentComplete: Math.min(99, overall),
           });
         },
+        onTrackComplete: (summary) => {
+          if (!firstTrack) enrichedTracksJson += ",";
+          enrichedTracksJson += JSON.stringify(summary);
+          firstTrack = false;
+        },
       });
     } catch (enrichErr) {
+      if (memoryLogIntervalId != null) {
+        clearInterval(memoryLogIntervalId);
+        memoryLogIntervalId = null;
+      }
       const msg = enrichErr instanceof Error ? enrichErr.message : String(enrichErr);
       if (msg === "ENRICHMENT_CANCELLED") {
         await writeProgress({ status: "cancelled" });
@@ -165,9 +203,18 @@ export async function runEnrichmentJob(
       throw enrichErr;
     }
 
-    const { enrichedTracks, aggregates } = result;
-    const hasAnyValidData = enrichedTracks.some((t) => t.validCount > 0);
-    if (enrichedTracks.length === 0) {
+    if (memoryLogIntervalId != null) {
+      clearInterval(memoryLogIntervalId);
+      memoryLogIntervalId = null;
+    }
+
+    const { aggregates, trackCount = result.enrichedTracks.length, totalPoints: resultTotalPoints, hasAnyValidData: resultHasValid } = result;
+    enrichedTracksJson += "]";
+    const numTracks = trackCount;
+    const hasAnyValidData = resultHasValid ?? result.enrichedTracks.some((t) => t.validCount > 0);
+    const totalPoints = resultTotalPoints ?? result.enrichedTracks.reduce((s, t) => s + t.pointCount, 0);
+
+    if (numTracks === 0) {
       await writeProgress({ status: "failed", error: "No tracks found in GPX." });
       try {
         await markCheckpointFailed(pb, recordId, jobId, "No tracks found in GPX.", true);
@@ -195,16 +242,15 @@ export async function runEnrichmentJob(
       currentPhase: "saving",
       currentPhasePercent: 0,
       overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING + WEIGHT_ENRICHMENT,
-      totalTracks: enrichedTracks.length,
+      totalTracks: numTracks,
     });
 
     demLog("Saving enrichment results to record...");
     const enhancementEndMs = Date.now();
-    const totalPoints = enrichedTracks.reduce((s, t) => s + t.pointCount, 0);
     const performance = buildEnhancementPerformance(
       enhancementStartMs,
       enhancementEndMs,
-      enrichedTracks.length,
+      numTracks,
       totalPoints,
       "completed",
       totalPoints,
@@ -213,7 +259,6 @@ export async function runEnrichmentJob(
     if (await isCancelled()) {
       return;
     }
-    const enrichedTracksJson = JSON.stringify(enrichedTracks);
     const performanceJsonStr = JSON.stringify(performance);
     const update: Record<string, unknown> = {
       enrichedTracksJson,
@@ -265,14 +310,21 @@ export async function runEnrichmentJob(
     demLog(
       `Cancellation checks: ${cancelChecksTotal} total, ${cancelFetchesActual} PocketBase fetches (throttled)`
     );
+    logMemoryUsage(logContext);
     demLog("Enrichment results saved. Job completed.");
   } catch (err) {
+    if (memoryLogIntervalId != null) {
+      clearInterval(memoryLogIntervalId);
+      memoryLogIntervalId = null;
+    }
     const message = err instanceof Error ? err.message : String(err);
     if (message === "ENRICHMENT_CANCELLED") {
       await writeProgress({ status: "cancelled" });
       return;
     }
-    console.error("[gpx/enrich] background job", err);
+    demLog(`Job failed jobId=${jobId} recordId=${recordId}: ${message}`);
+    logMemoryUsage(logContext);
+    console.error("[gpx/enrich] background job", jobId, recordId, err);
     await writeProgress({ status: "failed", error: message });
     try {
       await markCheckpointFailed(pb, recordId, jobId, message, true);

@@ -9,6 +9,8 @@ import type PocketBase from "pocketbase";
 import {
   getJobByJobId,
   getNextClaimableJob,
+  isJobStale,
+  markJobStaleAndFailed,
   updateJobProgress,
 } from "@/app/api/gpx/enrichment-checkpoint";
 import { demLog, runEnrichmentJob } from "./runEnrichmentJob";
@@ -58,6 +60,13 @@ export async function runWorkerLoop(
       continue;
     }
 
+    // Prevent crash/reclaim loop: running jobs with no heartbeat are marked failed and skipped (no reclaim).
+    if (isJobStale(beforeClaim)) {
+      demLog(`Job ${jobId} (record ${recordId}) has no heartbeat for too long; marking failed.`);
+      await markJobStaleAndFailed(pb, beforeClaim);
+      continue;
+    }
+
     await updateJobProgress(pb, jobId, { status: "running" }, checkpointRecordId);
 
     const afterClaim = await getJobByJobId(pb, jobId);
@@ -67,11 +76,12 @@ export async function runWorkerLoop(
 
     try {
       demLog(`Worker claimed job ${jobId} (record ${recordId}), running executor.`);
-      await runEnrichmentJob(pb, jobId);
+      await runEnrichmentJob(pb, jobId, { jobId, recordId });
     } catch (err) {
       demLog(
         `Worker job ${jobId} threw: ${err instanceof Error ? err.message : String(err)}`
       );
+      // runEnrichmentJob marks the job failed in its own catch; we continue to next job.
     }
   }
 }
