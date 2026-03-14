@@ -230,7 +230,8 @@ function FitToSelectedTrack({
         [b.north, b.east]
       );
     }
-    const padding = 24;
+    // Small padding so the selected track fills the visible map area tightly; 24 was too loose.
+    const padding = 12;
     const fitOptions: L.FitBoundsOptions = {
       maxZoom,
       ...(bottomPaddingPx > 0
