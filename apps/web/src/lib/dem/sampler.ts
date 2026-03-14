@@ -52,6 +52,12 @@ export type DemSamplerStats = {
 };
 
 /**
+ * Max tiles to keep open at once. Each tile holds a full GeoTIFF in memory (external/V8);
+ * capping prevents OOM on large DEM coverages (e.g. 6+ large tiles ≈ 6GB+).
+ */
+const MAX_OPEN_TILES = 4;
+
+/**
  * Raster sampler for one DEM tile. Transforms WGS84 lon/lat to raster CRS via proj4,
  * then maps to pixel coordinates and samples. Caches the open GeoTIFF image.
  */
@@ -87,6 +93,7 @@ export class DemRasterSampler {
 
   /**
    * Open a tile and cache it. Idempotent for the same path.
+   * Keeps at most MAX_OPEN_TILES in memory (FIFO eviction) to bound external memory.
    */
   async openTile(meta: DemTileMeta): Promise<OpenTile | null> {
     const path = await this.resolvePath(meta.path);
@@ -96,6 +103,12 @@ export class DemRasterSampler {
       return cached;
     }
     this.stats.openTileMisses++;
+
+    while (this.openTiles.size >= MAX_OPEN_TILES) {
+      const firstKey = this.openTiles.keys().next().value;
+      if (firstKey == null) break;
+      this.closeTile(firstKey);
+    }
 
     const fs = await import("node:fs/promises");
     const pathMod = await import("node:path");

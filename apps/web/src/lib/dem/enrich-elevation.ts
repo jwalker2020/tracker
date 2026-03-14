@@ -1348,18 +1348,23 @@ export async function enrichGpxWithDemPerTrack(
       ? [unionWest, unionSouth, unionEast, unionNorth]
       : [0, 0, 0, 0];
   const preloadTiles = findIntersectingTiles(index.tiles, unionBbox);
+  /** Cap preload so we don't load 6GB+ of tiles (external memory); matches sampler MAX_OPEN_TILES. */
+  const MAX_PRELOAD_TILES = 4;
+  const toPreload = preloadTiles.slice(0, MAX_PRELOAD_TILES);
   const preloadStartMs = Date.now();
-  const preloadedOpenTiles: OpenTileT[] = [];
-  for (const meta of preloadTiles) {
+  let preloadCount = 0;
+  for (const meta of toPreload) {
     const open = await sharedSampler.openTile(meta);
-    if (open != null) preloadedOpenTiles.push(open);
+    if (open != null) preloadCount++;
   }
   const preloadMs = Date.now() - preloadStartMs;
   if (preloadTiles.length > 0) {
     demLog(
-      `Preloaded ${preloadedOpenTiles.length}/${preloadTiles.length} DEM tiles for job bbox in ${preloadMs}ms`
+      `Preloaded ${preloadCount}/${preloadTiles.length} DEM tiles for job bbox in ${preloadMs}ms` +
+        (preloadTiles.length > MAX_PRELOAD_TILES ? ` (capped at ${MAX_PRELOAD_TILES})` : "")
     );
   }
+  // Do not pass preloadedOpenTiles: let each track open tiles on demand so sampler's MAX_OPEN_TILES cap applies.
 
   try {
     for (let i = 0; i < tracks.length; i++) {
@@ -1389,7 +1394,6 @@ export async function enrichGpxWithDemPerTrack(
       const result = await enrichSingleTrackFromIndex(track.points, track.bounds, index, {
         onProgress,
         sharedSampler,
-        preloadedOpenTiles: preloadedOpenTiles.length > 0 ? preloadedOpenTiles : undefined,
         isCancelled: config.isCancelled,
       });
       if (result._timing) {
