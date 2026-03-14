@@ -624,6 +624,8 @@ export function MapView({
   /** Per-track "fileId-trackIndex" -> failure timestamp. Retry allowed after RETRY_AFTER_MS. Cleared when files list ref changes. */
   const artifactLoadFailedTrackTimestamps = useRef<Map<string, number>>(new Map());
   const RETRY_AFTER_MS = 10_000;
+  /** Track key (fileId-trackIndex) while artifact fetch is in flight, so we can show "Loading profile…". */
+  const [artifactLoadingTrackKey, setArtifactLoadingTrackKey] = useState<string | null>(null);
   const prevFilesRef = useRef(files);
   if (prevFilesRef.current !== files) {
     prevFilesRef.current = files;
@@ -671,13 +673,17 @@ export function MapView({
   useEffect(() => {
     if (!selectedTrack) return;
     const file = files.find((f) => f.id === selectedTrack.fileId);
-    if (!file?.hasEnrichmentArtifact) return;
+    if (!file?.hasEnrichmentArtifact) {
+      setArtifactLoadingTrackKey(null);
+      return;
+    }
     const trackKey = `${file.id}-${selectedTrack.trackIndex}`;
     const failedAt = artifactLoadFailedTrackTimestamps.current.get(trackKey);
     if (failedAt != null && Date.now() - failedAt < RETRY_AFTER_MS) return;
     const existing = artifactTracksByFileId[file.id];
     if (existing?.[selectedTrack.trackIndex]?.elevationProfileJson != null) return;
     let cancelled = false;
+    setArtifactLoadingTrackKey(trackKey);
     const fetchStart = typeof performance !== "undefined" ? performance.now() : 0;
     const url = `/api/gpx/files/${file.id}/enrichment-artifact?trackIndex=${selectedTrack.trackIndex}`;
     fetch(url, { credentials: "include" })
@@ -692,6 +698,7 @@ export function MapView({
         if (cancelled) return;
         const fetchMs = typeof performance !== "undefined" ? performance.now() - fetchStart : 0;
         if (!result.ok || !result.json) {
+          if (!cancelled) setArtifactLoadingTrackKey(null);
           artifactLoadFailedTrackTimestamps.current.set(trackKey, Date.now());
           const statusCode = !result.ok && "status" in result ? (result as { status: number }).status : undefined;
           console.warn("[MapView] Per-track artifact fetch failed; summary-only fallback.", {
@@ -706,6 +713,7 @@ export function MapView({
         const oneTrack = parseEnrichedTrackSliceToDisplay(result.json);
         const parseMs = typeof performance !== "undefined" ? performance.now() - parseStart : 0;
         if (oneTrack) {
+          if (!cancelled) setArtifactLoadingTrackKey(null);
           if (process.env.NODE_ENV === "development" || fetchMs > 500 || (result.sliceBytes != null && result.sliceBytes > 500_000)) {
             console.info("[MapView] Per-track artifact success", {
               fileId: file.id,
@@ -723,6 +731,7 @@ export function MapView({
           setArtifactTracksByFileId((prev) => ({ ...prev, [file.id]: merged }));
           artifactLoadFailedTrackTimestamps.current.delete(trackKey);
         } else {
+          if (!cancelled) setArtifactLoadingTrackKey(null);
           artifactLoadFailedTrackTimestamps.current.set(trackKey, Date.now());
           console.warn("[MapView] Per-track artifact parse failed; summary-only fallback.", {
             fileId: file.id,
@@ -734,6 +743,7 @@ export function MapView({
       })
       .catch((err) => {
         if (!cancelled) {
+          setArtifactLoadingTrackKey(null);
           artifactLoadFailedTrackTimestamps.current.set(trackKey, Date.now());
           const fetchMs = typeof performance !== "undefined" ? performance.now() - fetchStart : 0;
           console.warn("[MapView] Per-track artifact fetch error; summary-only fallback.", {
@@ -746,6 +756,7 @@ export function MapView({
       });
     return () => {
       cancelled = true;
+      setArtifactLoadingTrackKey(null);
     };
   }, [files, selectedTrack, artifactTracksByFileId]);
 
@@ -761,6 +772,14 @@ export function MapView({
     const profilePoints = parseProfileJson(track.elevationProfileJson);
     return { trackName: track.name, profilePoints, track };
   }, [files, selectedTrack, artifactTracksByFileId]);
+
+  const profilePanelMessage = useMemo(() => {
+    if (!selectedTrack) return "Elevation profile not available for this track.";
+    const file = files.find((f) => f.id === selectedTrack.fileId);
+    const trackKey = file ? `${file.id}-${selectedTrack.trackIndex}` : "";
+    const loading = Boolean(file?.hasEnrichmentArtifact && artifactLoadingTrackKey === trackKey);
+    return loading ? "Loading profile…" : "Elevation profile not available for this track.";
+  }, [files, selectedTrack, artifactLoadingTrackKey]);
 
   const onHoverIndex = useCallback((index: number | null) => {
     setHoveredIndex((prev) => (index === prev ? prev : index));
@@ -895,7 +914,7 @@ export function MapView({
             )}
           </div>
           <div className="min-w-0 flex-1 p-2 flex flex-col min-h-0">
-            {selectedProfile ? (
+            {selectedProfile?.profilePoints && selectedProfile.profilePoints.length >= 2 ? (
               <TrackProfilePanel
                 trackName={selectedProfile.trackName}
                 profilePoints={selectedProfile.profilePoints}
@@ -907,7 +926,7 @@ export function MapView({
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-slate-400">
-                Elevation profile not available for this track.
+                {profilePanelMessage}
               </div>
             )}
           </div>
