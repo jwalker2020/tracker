@@ -501,6 +501,10 @@ function GpxOverlay({
       files.length > 0 &&
       prevIds.size < newFileIds.size &&
       [...prevIds].every((id) => newFileIds.has(id));
+    const onlyRemovingFiles =
+      files.length > 0 &&
+      newFileIds.size < prevIds.size &&
+      [...newFileIds].every((id) => prevIds.has(id));
 
     const onMapClick = () => setSelectedTrack(null);
     map.on("click", onMapClick);
@@ -518,6 +522,19 @@ function GpxOverlay({
       trackLayersRef.current = [];
       renderedFileIdsRef.current = new Set();
     };
+
+    if (onlyRemovingFiles) {
+      for (const ref of trackLayersRef.current) {
+        if (!newFileIds.has(ref.fileId)) {
+          overlay.removeLayer(ref.poly);
+          overlay.removeLayer(ref.hitPoly);
+        }
+      }
+      trackLayersRef.current = trackLayersRef.current.filter((r) => newFileIds.has(r.fileId));
+      renderedFileIdsRef.current = new Set(newFileIds);
+      visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
+      return () => map.off("click", onMapClick);
+    }
 
     if (!onlyAddingFiles) {
       doFullRefresh();
