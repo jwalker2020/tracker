@@ -266,6 +266,30 @@ const METERS_TO_MILES = 1 / 1609.344;
 const RANGE_EPSILON_MI = 0.0001;
 
 /**
+ * When the user clears the selected track (e.g. clicks the map), the bottom panel unmounts and the
+ * map container grows. Leaflet caches container size and does not observe DOM resize; we must call
+ * invalidateSize() so the map recalculates and redraws to the new size (avoids a gray bar where
+ * the panel was). Only runs on the transition from "selection set" to "selection cleared", not on
+ * initial mount or when setting a selection.
+ */
+function MapResizeOnSelectionClear({ selectedTrack }: { selectedTrack: SelectedTrack | null }) {
+  const map = useMap();
+  const hadSelectionRef = useRef(false);
+  useEffect(() => {
+    const hadSelection = hadSelectionRef.current;
+    hadSelectionRef.current = selectedTrack != null;
+    if (hadSelection && selectedTrack == null) {
+      // Defer until after React commit and layout so the map container has its new height.
+      const id = requestAnimationFrame(() => {
+        map.invalidateSize();
+      });
+      return () => cancelAnimationFrame(id);
+    }
+  }, [map, selectedTrack]);
+  return null;
+}
+
+/**
  * Syncs map viewport with chart range: reports minimum chart span (so chart can't zoom past map)
  * and visible distance range when the user pans/zooms the map. Skips updates when ignoreRef is true
  * (e.g. right after we programmatically fitBounds) to avoid update loops.
@@ -897,6 +921,7 @@ export function MapView({
             ignoreMapSyncRef={ignoreMapSyncRef}
             skipFitForMapSyncRef={skipFitForMapSyncRef}
           />
+          <MapResizeOnSelectionClear selectedTrack={selectedTrack} />
         </MapContainer>
       </div>
       {selectedTrack && (
