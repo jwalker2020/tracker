@@ -309,7 +309,10 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
                 delete next[recordId];
                 return next;
               });
-              refetch();
+              if (recordId) setSelectedIds((prev) => new Set([...prev, recordId]));
+              // Refetch so file gets hasEnrichmentArtifact + enrichedTracksSummary. Delay so worker's DB update is visible; retry once in case of race.
+              setTimeout(refetch, 200);
+              setTimeout(refetch, 1500);
             }}
           />
         </section>
