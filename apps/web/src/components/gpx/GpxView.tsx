@@ -125,6 +125,8 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
     .map((id) => files.find((f) => f.id === id))
     .filter((f): f is GpxFileRecordForDisplay => f != null);
 
+  /** Grade is percent (0–100); clamp to avoid bad data showing as e.g. 1M%. */
+  const GRADE_PCT_CLAMP = 100;
   const dataBounds = useMemo(() => {
     const tracks: { grade: number; maximumGrade: number; curviness: number }[] = [];
     for (const f of selectedFiles) {
@@ -135,12 +137,18 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
           typeof t?.averageGradePct === "number" && Number.isFinite(t.averageGradePct)
             ? t.averageGradePct
             : NaN;
-        const grade = Number.isFinite(rawGrade) ? Math.max(0, rawGrade) : NaN;
+        const grade =
+          Number.isFinite(rawGrade)
+            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, Math.max(0, rawGrade)))
+            : NaN;
         const rawMaxGrade =
           typeof t?.maximumGradePct === "number" && Number.isFinite(t.maximumGradePct)
             ? t.maximumGradePct
             : NaN;
-        const maximumGrade = Number.isFinite(rawMaxGrade) ? Math.max(0, rawMaxGrade) : NaN;
+        const maximumGrade =
+          Number.isFinite(rawMaxGrade)
+            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, rawMaxGrade)))
+            : NaN;
         const rawCurviness =
           typeof t?.averageCurvinessDegPerMile === "number" &&
           Number.isFinite(t.averageCurvinessDegPerMile)
@@ -217,12 +225,18 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
           typeof t?.averageGradePct === "number" && Number.isFinite(t.averageGradePct)
             ? t.averageGradePct
             : NaN;
-        const grade = Number.isFinite(rawGrade) ? Math.max(0, rawGrade) : NaN;
+        const grade =
+          Number.isFinite(rawGrade)
+            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, Math.max(0, rawGrade)))
+            : NaN;
         const rawMaxGrade =
           typeof t?.maximumGradePct === "number" && Number.isFinite(t.maximumGradePct)
             ? t.maximumGradePct
             : NaN;
-        const maximumGrade = Number.isFinite(rawMaxGrade) ? Math.max(0, rawMaxGrade) : NaN;
+        const maximumGrade =
+          Number.isFinite(rawMaxGrade)
+            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, rawMaxGrade)))
+            : NaN;
         const rawCurviness =
           typeof t?.averageCurvinessDegPerMile === "number" &&
           Number.isFinite(t.averageCurvinessDegPerMile)
