@@ -50,6 +50,24 @@ Set in `docker-compose.yml` or in Coolify for each service:
 
 ---
 
+## Enrichment artifact upload (server-only rules)
+
+The worker and the sync enrich API create/update records in the `enrichment_artifacts` collection. So that they can do this without admin auth, the collection rules are relaxed for server-only access:
+
+1. **Run migrations**  
+   Migrations run automatically when the PocketBase container starts (see `apps/pb/start-pocketbase.sh`). The migration `1790000006_enrichment_artifacts_allow_server_api.js` sets `listRule`, `viewRule`, `createRule`, and `updateRule` to empty string (`""`), which in PocketBase means “anyone can perform the action” (guests, authenticated users, admins).
+
+2. **If you deploy without the new migration**  
+   - Build and deploy the PocketBase image that includes the new migration (from `apps/pb`).  
+   - Restart the PocketBase container so it runs `pocketbase migrate up` on startup.  
+   - Or, once, run migrations manually:  
+     `docker compose exec pocketbase /app/pocketbase migrate up`
+
+3. **Security**  
+   PocketBase must stay **internal-only** (no public URL, no tunnel). Only the web and worker containers should be able to call it. With that, allowing unauthenticated create/update on `enrichment_artifacts` is acceptable; the API is not exposed to the internet.
+
+---
+
 ## Run locally with Docker Compose
 
 From the **repo root**:

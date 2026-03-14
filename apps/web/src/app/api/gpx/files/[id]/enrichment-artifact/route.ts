@@ -7,6 +7,9 @@ const COLLECTION = "gpx_files";
 
 type IndexEntry = { trackIndex: number; start: number; length: number };
 
+/** Logged once when backend returns 200 despite Range header (range not supported). */
+let rangeUnsupportedLogged = false;
+
 /** Read a byte range [start, start+length] from a response body stream without buffering the rest. */
 async function readStreamSlice(res: Response, start: number, length: number): Promise<string> {
   const reader = res.body!.getReader();
@@ -44,6 +47,116 @@ async function readStreamSlice(res: Response, start: number, length: number): Pr
     off += c.length;
   }
   return new TextDecoder().decode(out);
+}
+
+/**
+ * Fetch artifact slice: try Range request first; if backend does not support it or response is wrong size, fall back to full fetch + slice.
+ * Returns { slice, sliceBytes, fetchMs, rangeRequest, rangeHonored }.
+ */
+async function fetchArtifactSlice(
+  url: string,
+  entry: IndexEntry,
+  fileId: string,
+  trackIndex: number
+): Promise<{
+  slice: string;
+  sliceBytes: number;
+  fetchMs: number;
+  rangeRequest: boolean;
+  rangeHonored: boolean;
+}> {
+  const rangeStart = entry.start;
+  const rangeEnd = entry.start + entry.length - 1;
+  const rangeHeader = `bytes=${rangeStart}-${rangeEnd}`;
+  const startMs = Date.now();
+
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Range: rangeHeader } });
+  } catch (err) {
+    throw err;
+  }
+
+  const fetchMs = Date.now() - startMs;
+
+  if (res.status === 206) {
+    const contentLengthHeader = res.headers.get("Content-Length");
+    const declaredLength = contentLengthHeader != null ? parseInt(contentLengthHeader, 10) : null;
+    const bodyBytes = new Uint8Array(await res.arrayBuffer());
+    const actualLength = bodyBytes.length;
+
+    if (
+      (declaredLength != null && declaredLength !== entry.length) ||
+      actualLength !== entry.length
+    ) {
+      console.warn("[enrichment-artifact] Range response length mismatch; falling back to full fetch", {
+        fileId,
+        trackIndex,
+        sliceBytes: entry.length,
+        declaredLength,
+        actualLength,
+        expectedLength: entry.length,
+      });
+      const fullRes = await fetch(url);
+      if (!fullRes.ok) {
+        console.warn("[enrichment-artifact] Artifact file not ok (fallback)", {
+          fileId,
+          trackIndex,
+          status: fullRes.status,
+        });
+        throw new Error(`Artifact fetch ${fullRes.status}`);
+      }
+      const slice = await readStreamSlice(fullRes, entry.start, entry.length);
+      const fallbackMs = Date.now() - startMs;
+      return {
+        slice,
+        sliceBytes: entry.length,
+        fetchMs: fallbackMs,
+        rangeRequest: true,
+        rangeHonored: false,
+      };
+    }
+
+    const slice = new TextDecoder().decode(bodyBytes);
+    return {
+      slice,
+      sliceBytes: entry.length,
+      fetchMs,
+      rangeRequest: true,
+      rangeHonored: true,
+    };
+  }
+
+  if (res.status === 200) {
+    if (!rangeUnsupportedLogged) {
+      rangeUnsupportedLogged = true;
+      console.info("[enrichment-artifact] Range requests not supported by backend; using full fetch + slice");
+    }
+    const slice = await readStreamSlice(res, entry.start, entry.length);
+    return {
+      slice,
+      sliceBytes: entry.length,
+      fetchMs,
+      rangeRequest: true,
+      rangeHonored: false,
+    };
+  }
+
+  if (res.status === 416) {
+    const fullRes = await fetch(url);
+    if (!fullRes.ok) throw new Error(`Artifact fetch ${fullRes.status}`);
+    const slice = await readStreamSlice(fullRes, entry.start, entry.length);
+    const fallbackMs = Date.now() - startMs;
+    return {
+      slice,
+      sliceBytes: entry.length,
+      fetchMs: fallbackMs,
+      rangeRequest: true,
+      rangeHonored: false,
+    };
+  }
+
+  throw new Error(`Artifact fetch ${res.status}`);
 }
 
 /**
@@ -171,34 +284,57 @@ export async function GET(
     }
   }
 
-  const startMs = Date.now();
-  let res: Response;
+  let slice: string;
+  let fetchMs: number;
+  let sliceBytes: number;
+  let rangeRequest: boolean;
+  let rangeHonored: boolean;
+
   try {
-    res = await fetch(info.url);
+    const result = await fetchArtifactSlice(info.url, entry, id, requestedTrackIndex);
+    slice = result.slice;
+    fetchMs = result.fetchMs;
+    sliceBytes = result.sliceBytes;
+    rangeRequest = result.rangeRequest;
+    rangeHonored = result.rangeHonored;
   } catch (err) {
-    console.warn("[enrichment-artifact] Artifact fetch failed", { fileId: id, trackIndex: requestedTrackIndex, error: err instanceof Error ? err.message : String(err) });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[enrichment-artifact] Artifact fetch failed", {
+      fileId: id,
+      trackIndex: requestedTrackIndex,
+      error: msg,
+    });
+    if (msg.includes("404")) {
+      return NextResponse.json(
+        { error: "Enrichment artifact not found", code: "ARTIFACT_NOT_FOUND" },
+        { status: 404 }
+      );
+    }
     return NextResponse.json(
       { error: "Failed to load artifact", code: "ARTIFACT_FETCH_FAILED" },
       { status: 502 }
     );
   }
 
-  if (!res.ok) {
-    console.warn("[enrichment-artifact] Artifact file not ok", { fileId: id, trackIndex: requestedTrackIndex, status: res.status });
-    return NextResponse.json(
-      { error: "Enrichment artifact not found", code: "ARTIFACT_NOT_FOUND" },
-      { status: 404 }
-    );
-  }
-
-  const slice = await readStreamSlice(res, entry.start, entry.length);
-  const fetchMs = Date.now() - startMs;
-  const sliceBytes = entry.length;
   const isLargeOrSlow = sliceBytes > 500_000 || fetchMs > 500;
   if (isLargeOrSlow) {
-    console.info("[enrichment-artifact] slice ok", { fileId: id, trackIndex: requestedTrackIndex, sliceBytes, fetchMs });
+    console.info("[enrichment-artifact] slice ok", {
+      fileId: id,
+      trackIndex: requestedTrackIndex,
+      sliceBytes,
+      fetchMs,
+      rangeRequest,
+      rangeHonored,
+    });
   } else {
-    console.debug("[enrichment-artifact] slice ok", { fileId: id, trackIndex: requestedTrackIndex, sliceBytes, fetchMs });
+    console.debug("[enrichment-artifact] slice ok", {
+      fileId: id,
+      trackIndex: requestedTrackIndex,
+      sliceBytes,
+      fetchMs,
+      rangeRequest,
+      rangeHonored,
+    });
   }
 
   const body = `[${slice}]`;

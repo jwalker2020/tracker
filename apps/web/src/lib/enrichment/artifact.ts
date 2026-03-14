@@ -117,13 +117,35 @@ export async function saveEnrichmentArtifactFromPath(
   const recordsUrl = `${baseUrl}/api/collections/${COLLECTION}/records`;
   const uploadStartMs = Date.now();
 
+  const authToken =
+    typeof (pb as { authStore?: { token?: string } }).authStore?.token === "string"
+      ? (pb as { authStore: { token: string } }).authStore.token
+      : undefined;
+
   const doUpload = async (url: string, method: "POST" | "PATCH"): Promise<{ id: string; size: number }> => {
+    const baseHeaders = form.getHeaders() as Record<string, string>;
+    if (authToken) baseHeaders["Authorization"] = `Bearer ${authToken}`;
+
+    const headersWithLength = await new Promise<Record<string, string>>((resolve, reject) => {
+      form.getLength((err, length) => {
+        if (err) {
+          resolve(baseHeaders);
+          return;
+        }
+        if (typeof length === "number" && length > 0) {
+          resolve({ ...baseHeaders, "Content-Length": String(length) });
+        } else {
+          resolve(baseHeaders);
+        }
+      });
+    });
+
     let res: Response;
     try {
       res = await fetch(url, {
         method,
         body: form as unknown as BodyInit,
-        headers: form.getHeaders() as HeadersInit,
+        headers: headersWithLength as HeadersInit,
         duplex: "half",
       } as RequestInit);
     } catch (networkErr) {
@@ -152,15 +174,20 @@ export async function saveEnrichmentArtifactFromPath(
           : statusCode >= 400
             ? "client error"
             : "unexpected response";
-      console.warn("[enrichment-artifact] upload failed", {
+      const logPayload: Record<string, unknown> = {
         recordId,
         statusCode,
         reason,
-        bodyPreview: bodyPreview.slice(0, 200),
+        bodyFull: bodyText.slice(0, 500),
         fileSize,
         uploadMs: Date.now() - uploadStartMs,
         mode: isUpdate ? "update" : "create",
-      });
+      };
+      if (statusCode === 400) {
+        logPayload.hint =
+          "Check PocketBase server logs (or run with --debug). Ensure enrichment_artifacts createRule allows this request; if using rules, authenticate the client (e.g. admin token for worker).";
+      }
+      console.warn("[enrichment-artifact] upload failed", logPayload);
       throw new ArtifactUploadError(
         `Artifact upload ${statusCode} (${reason}): ${bodyPreview.slice(0, 150)}`,
         statusCode,
@@ -219,10 +246,18 @@ export async function saveEnrichmentArtifactFromPath(
             contentType: "application/x-ndjson",
             knownLength: fileSize,
           });
+          const headers2 = form2.getHeaders() as Record<string, string>;
+          if (authToken) headers2["Authorization"] = `Bearer ${authToken}`;
+          const headers2WithLength = await new Promise<Record<string, string>>((resolve) => {
+            form2.getLength((err, length) => {
+              if (err || typeof length !== "number" || length <= 0) resolve(headers2);
+              else resolve({ ...headers2, "Content-Length": String(length) });
+            });
+          });
           const res = await fetch(`${recordsUrl}/${retryItem.id}`, {
             method: "PATCH",
             body: form2 as unknown as BodyInit,
-            headers: form2.getHeaders() as HeadersInit,
+            headers: headers2WithLength as HeadersInit,
             duplex: "half",
           } as RequestInit);
           const text = await res.text();
