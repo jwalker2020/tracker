@@ -160,19 +160,18 @@ function FitToSelection({
     const ne = combined.getNorthEast();
     const container = map.getContainer();
     const rect = container?.getBoundingClientRect?.();
+    const padding = 4;
     console.info("[FitToSelection] zoom-to-selection", {
       path: usedVisibleTracks ? "visible-tracks" : "file-bounds",
       visibleSize: visible?.size ?? null,
       filesCount: currentFiles.length,
       boundsCount: boundsList.length,
       combined: { south: sw.lat, west: sw.lng, north: ne.lat, east: ne.lng },
-      padding: 12,
+      padding,
       bottomPaddingPx,
       maxZoom,
       mapSize: rect ? `${Math.round(rect.width)}x${Math.round(rect.height)}` : null,
     });
-    // Small padding so selection fills the map tightly.
-    const padding = 12;
     const fitOptions: L.FitBoundsOptions = {
       maxZoom,
       ...(bottomPaddingPx > 0
@@ -183,6 +182,14 @@ function FitToSelection({
         : { padding: L.point(padding, padding) }),
     };
     map.fitBounds(combined, fitOptions);
+    // After fitBounds finishes, zoom in one level to reduce aspect-ratio margin (deterministic: +1 to fit zoom, not cumulative).
+    map.once("moveend", () => {
+      const z = map.getZoom();
+      if (Number.isFinite(z)) {
+        const next = Math.min(maxZoom, z + 1);
+        if (next > z) map.setZoom(next);
+      }
+    });
   }, [map, fitToSelectionTrigger, bottomPaddingPx, maxZoom, visibleTrackKeys]);
   return null;
 }
