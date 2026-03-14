@@ -169,12 +169,18 @@ export function computeElevationStats(
   };
 }
 
+/** Reasonable cap for grade (%). Values beyond this usually indicate wrong units or bad data. */
+const GRADE_PCT_CAP = 100;
+/** Minimum distance (m) to compute grade; below this we return 0 to avoid division blow-up from bad data. */
+const MIN_DISTANCE_FOR_GRADE_M = 1;
+
 /**
  * Compute elevation stats and grade metrics using horizontal distance (meters).
  * Segments with missing (null) elevation are skipped for ascent/descent; denominator is total horizontal distance.
  * - averageGradePct: signed grade = (totalAscent - totalDescent) / distance × 100 (negative for net descent).
  * - averageSteepnessPct: absolute grade = (totalAscent + totalDescent) / distance × 100 (terrain steepness).
- * Returns 0 for grade/steepness when distance is zero or result is non-finite.
+ * Returns 0 for grade/steepness when distance is zero, below MIN_DISTANCE_FOR_GRADE_M, or result is non-finite.
+ * Grade is clamped to [-GRADE_PCT_CAP, GRADE_PCT_CAP] to avoid persisting absurd values from unit/division bugs.
  * Optional options.ascentDescentThresholdM: segment changes below this are not counted toward ascent/descent.
  */
 export function computeElevationStatsWithDistance(
@@ -183,15 +189,20 @@ export function computeElevationStatsWithDistance(
   options?: ComputeElevationStatsOptions
 ): ElevationStats {
   const stats = computeElevationStats(elevations, options);
-  const safeDistance = Number.isFinite(horizontalDistanceM) && horizontalDistanceM > 0
-    ? horizontalDistanceM
-    : 0;
+  const safeDistance =
+    Number.isFinite(horizontalDistanceM) && horizontalDistanceM >= MIN_DISTANCE_FOR_GRADE_M
+      ? horizontalDistanceM
+      : 0;
   const netElevationM = stats.totalAscentM - stats.totalDescentM;
   const totalClimbM = stats.totalAscentM + stats.totalDescentM;
   const rawGrade = safeDistance > 0 ? (netElevationM / safeDistance) * 100 : 0;
   const rawSteepness = safeDistance > 0 ? (totalClimbM / safeDistance) * 100 : 0;
-  const averageGradePct = Number.isFinite(rawGrade) ? rawGrade : 0;
-  const averageSteepnessPct = Number.isFinite(rawSteepness) ? rawSteepness : 0;
+  const averageGradePct = Number.isFinite(rawGrade)
+    ? Math.max(-GRADE_PCT_CAP, Math.min(GRADE_PCT_CAP, rawGrade))
+    : 0;
+  const averageSteepnessPct = Number.isFinite(rawSteepness)
+    ? Math.max(0, Math.min(GRADE_PCT_CAP, rawSteepness))
+    : 0;
   return { ...stats, averageGradePct, averageSteepnessPct };
 }
 

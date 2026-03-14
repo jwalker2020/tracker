@@ -944,8 +944,12 @@ function computeAggregates(tracks: EnrichedTrackSummary[]): EnrichmentAggregates
   const totalClimbM = totalAscentM + totalDescentM;
   const rawGrade = distanceM > 0 ? (netElevationM / distanceM) * 100 : 0;
   const rawSteepness = distanceM > 0 ? (totalClimbM / distanceM) * 100 : 0;
-  const averageGradePct = Number.isFinite(rawGrade) ? rawGrade : 0;
-  const averageSteepnessPct = Number.isFinite(rawSteepness) ? rawSteepness : 0;
+  const averageGradePct = Number.isFinite(rawGrade)
+    ? Math.max(-GRADE_PCT_CAP, Math.min(GRADE_PCT_CAP, rawGrade))
+    : 0;
+  const averageSteepnessPct = Number.isFinite(rawSteepness)
+    ? Math.max(0, Math.min(GRADE_PCT_CAP, rawSteepness))
+    : 0;
   return {
     distanceM,
     minElevationM: Number.isFinite(minElevationM) ? minElevationM : 0,
@@ -981,13 +985,20 @@ function mergeTrackIntoAggregates(
     maxElevationM: Number.isFinite(maxElevationM) ? maxElevationM : 0,
     totalAscentM,
     totalDescentM,
-    averageGradePct: Number.isFinite(rawGrade) ? rawGrade : 0,
-    averageSteepnessPct: Number.isFinite(rawSteepness) ? rawSteepness : 0,
+    averageGradePct: Number.isFinite(rawGrade)
+      ? Math.max(-GRADE_PCT_CAP, Math.min(GRADE_PCT_CAP, rawGrade))
+      : 0,
+    averageSteepnessPct: Number.isFinite(rawSteepness)
+      ? Math.max(0, Math.min(GRADE_PCT_CAP, rawSteepness))
+      : 0,
   };
 }
 
 const M_TO_FT = 3.28084;
 const M_TO_MI = 1 / 1609.344;
+
+/** Cap for grade (%). Avoids persisting absurd values from unit/division bugs. */
+const GRADE_PCT_CAP = 100;
 
 /** Minimum segment length (m) to include; shorter segments are skipped to reduce GPS jitter. */
 const CURVINESS_MIN_SEGMENT_M = 3;
@@ -1137,7 +1148,7 @@ const GRADE_MIN_SEGMENT_M = 1;
  * Compute maximum grade (percent) from a smoothed elevation profile.
  * Uses same noise reduction as average grade: segments shorter than GRADE_MIN_SEGMENT_M
  * or with elevation change smaller than ELEVATION_CHANGE_THRESHOLD_M are ignored.
- * Returns the maximum segment grade by magnitude (uphill or downhill).
+ * Returns the maximum segment grade by magnitude (uphill or downhill), clamped to [0, GRADE_PCT_CAP].
  */
 function computeMaximumGradePct(profile: Array<{ d: number; e: number }>): number {
   if (!profile || profile.length < 2) return 0;
@@ -1158,7 +1169,7 @@ function computeMaximumGradePct(profile: Array<{ d: number; e: number }>): numbe
     const gradePct = Math.abs((elevM / distM) * 100);
     if (Number.isFinite(gradePct) && gradePct > maxGradePct) maxGradePct = gradePct;
   }
-  return maxGradePct;
+  return Math.min(GRADE_PCT_CAP, maxGradePct);
 }
 
 function toEnrichedTrackSummary(
@@ -1194,6 +1205,12 @@ function toEnrichedTrackSummary(
         )
       : 0;
 
+  const averageGradePct = (() => {
+    const v = result.stats.averageGradePct;
+    if (!Number.isFinite(v)) return 0;
+    return Math.max(-GRADE_PCT_CAP, Math.min(GRADE_PCT_CAP, v));
+  })();
+
   return {
     trackIndex: track.trackIndex,
     name: track.name,
@@ -1206,7 +1223,7 @@ function toEnrichedTrackSummary(
     maxElevationM: result.stats.maxElevationM,
     totalAscentM: result.stats.totalAscentM,
     totalDescentM: result.stats.totalDescentM,
-    averageGradePct: result.stats.averageGradePct,
+    averageGradePct,
     averageSteepnessPct: result.stats.averageSteepnessPct,
     maximumGradePct,
     averageCurvinessDegPerMile,
