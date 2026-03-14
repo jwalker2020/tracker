@@ -70,8 +70,14 @@ export type GpxFileRecord = {
   enrichedGeoJson?: string;
   /** Legacy: single combined profile (meters). Prefer enrichedTracksJson. */
   elevationProfileJson?: string;
-  /** Per-track enrichment: JSON array of EnrichedTrackSummary (meters). */
+  /** Set by sync enrich only; not used for display. Detail is in artifact + per-track fetch. */
   enrichedTracksJson?: string;
+  /** Compact per-track summary (no profiles). Authoritative for list/filter/selection; detail via artifact ?trackIndex=N. */
+  enrichedTracksSummary?: string;
+  /** When true, full enrichment is in enrichment_artifacts (NDJSON); fetch per track with ?trackIndex=N. */
+  hasEnrichmentArtifact?: boolean;
+  /** Required for artifact reads. JSON array of { trackIndex, start, length } byte offsets into NDJSON artifact. */
+  enrichmentArtifactIndex?: string;
   /** JSON: GpxEnhancementPerformance — enhancement run timing and throughput metrics. */
   performanceJson?: string;
   sortOrder?: number;
@@ -115,7 +121,7 @@ export type GpxFileRecordForDisplay = Omit<
   maxElevationFt?: number;
   totalAscentFt?: number;
   totalDescentFt?: number;
-  /** Per-track enrichment (feet). Use for track popup and filtering. */
+  /** Per-track enrichment (feet). Use for track popup and filtering. Profiles may be null when hasEnrichmentArtifact; load artifact for full detail. */
   enrichedTracks?: EnrichedTrackSummaryForDisplay[];
   /** When set, this file has an active (running/resumable) enrichment job; use for working indicator and progress polling. */
   activeEnrichmentJobId?: string;
@@ -129,8 +135,8 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
     maxElevationM,
     totalAscentM,
     totalDescentM,
-    elevationProfileJson,
-    enrichedTracksJson,
+    enrichedTracksSummary,
+    hasEnrichmentArtifact,
     ...rest
   } = record;
   const out: GpxFileRecordForDisplay = {
@@ -142,9 +148,9 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
     ...(totalDescentM != null && { totalDescentFt: metersToFeet(totalDescentM) }),
   };
 
-  if (enrichedTracksJson) {
+  if (hasEnrichmentArtifact && enrichedTracksSummary) {
     try {
-      const tracks = JSON.parse(enrichedTracksJson) as Array<{
+      const tracks = JSON.parse(enrichedTracksSummary) as Array<{
         trackIndex: number;
         name: string;
         pointCount: number;
@@ -161,7 +167,6 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
         maximumGradePct?: number;
         averageCurvinessDegPerMile?: number;
         validCount: number;
-        elevationProfileJson: string | null;
       }>;
       if (Array.isArray(tracks)) {
         out.enrichedTracks = tracks.map((t) => ({
@@ -187,35 +192,7 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
               ? t.averageCurvinessDegPerMile
               : 0,
           validCount: t.validCount,
-          elevationProfileJson: (() => {
-            if (!t.elevationProfileJson) return null;
-            try {
-              const profile = JSON.parse(t.elevationProfileJson) as Array<{
-                d: number;
-                e: number;
-                lat?: number;
-                lng?: number;
-              }>;
-              if (!Array.isArray(profile) || profile.length === 0) return t.elevationProfileJson;
-              const maxD = Math.max(...profile.map((p) => p.d));
-              if (maxD > 20) {
-                return JSON.stringify(
-                  profile.map((p) => {
-                    const lat = typeof p.lat === "number" && Number.isFinite(p.lat) ? p.lat : undefined;
-                    const lng = typeof p.lng === "number" && Number.isFinite(p.lng) ? p.lng : undefined;
-                    return {
-                      d: metersToFeet(p.d) / 5280,
-                      e: metersToFeet(p.e),
-                      ...(lat !== undefined && lng !== undefined && { lat, lng }),
-                    };
-                  })
-                );
-              }
-              return t.elevationProfileJson;
-            } catch {
-              return t.elevationProfileJson;
-            }
-          })(),
+          elevationProfileJson: null,
         }));
       }
     } catch {
@@ -224,6 +201,98 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
   }
 
   return out;
+}
+
+type RawTrackFromArtifact = {
+  trackIndex: number;
+  name: string;
+  pointCount: number;
+  bounds: { south: number; west: number; north: number; east: number };
+  centerLat: number;
+  centerLng: number;
+  distanceM: number;
+  minElevationM: number;
+  maxElevationM: number;
+  totalAscentM: number;
+  totalDescentM: number;
+  averageGradePct: number;
+  averageSteepnessPct?: number;
+  maximumGradePct?: number;
+  averageCurvinessDegPerMile?: number;
+  validCount: number;
+  elevationProfileJson: string | null;
+};
+
+function oneTrackToDisplay(t: RawTrackFromArtifact): EnrichedTrackSummaryForDisplay {
+  return {
+    trackIndex: t.trackIndex,
+    name: t.name,
+    pointCount: t.pointCount,
+    bounds: t.bounds,
+    centerLat: t.centerLat,
+    centerLng: t.centerLng,
+    distanceFt: metersToFeet(t.distanceM),
+    minElevationFt: metersToFeet(t.minElevationM),
+    maxElevationFt: metersToFeet(t.maxElevationM),
+    totalAscentFt: metersToFeet(t.totalAscentM),
+    totalDescentFt: metersToFeet(t.totalDescentM),
+    averageGradePct: t.averageGradePct,
+    averageSteepnessPct: typeof t.averageSteepnessPct === "number" ? t.averageSteepnessPct : 0,
+    maximumGradePct:
+      typeof t.maximumGradePct === "number" && Number.isFinite(t.maximumGradePct)
+        ? t.maximumGradePct
+        : 0,
+    averageCurvinessDegPerMile:
+      typeof t.averageCurvinessDegPerMile === "number" && Number.isFinite(t.averageCurvinessDegPerMile)
+        ? t.averageCurvinessDegPerMile
+        : 0,
+    validCount: t.validCount,
+    elevationProfileJson: (() => {
+      if (!t.elevationProfileJson) return null;
+      try {
+        const profile = JSON.parse(t.elevationProfileJson) as Array<{
+          d: number;
+          e: number;
+          lat?: number;
+          lng?: number;
+        }>;
+        if (!Array.isArray(profile) || profile.length === 0) return t.elevationProfileJson;
+        const maxD = Math.max(...profile.map((p) => p.d));
+        if (maxD > 20) {
+          return JSON.stringify(
+            profile.map((p) => {
+              const lat = typeof p.lat === "number" && Number.isFinite(p.lat) ? p.lat : undefined;
+              const lng = typeof p.lng === "number" && Number.isFinite(p.lng) ? p.lng : undefined;
+              return {
+                d: metersToFeet(p.d) / 5280,
+                e: metersToFeet(p.e),
+                ...(lat !== undefined && lng !== undefined && { lat, lng }),
+              };
+            })
+          );
+        }
+        return t.elevationProfileJson;
+      } catch {
+        return t.elevationProfileJson;
+      }
+    })(),
+  };
+}
+
+/**
+ * Parse artifact slice response: a JSON array of one track (meters) to display shape (feet).
+ * Used when loading a single track via GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N.
+ */
+export function parseEnrichedTrackSliceToDisplay(
+  jsonArrayString: string
+): EnrichedTrackSummaryForDisplay | null {
+  try {
+    const arr = JSON.parse(jsonArrayString) as RawTrackFromArtifact[];
+    if (!Array.isArray(arr) || arr.length !== 1) return null;
+    return oneTrackToDisplay(arr[0]!);
+  } catch {
+    return null;
+  }
 }
 
 const COLLECTION = "gpx_files";

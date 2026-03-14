@@ -20,11 +20,13 @@ RUN case ${TARGETARCH} in \
   chmod +x /app/pocketbase
 
 COPY pb_migrations /app/pb_migrations
+COPY start-pocketbase.sh /app/start-pocketbase.sh
+RUN chmod +x /app/start-pocketbase.sh
 WORKDIR /app
 
 # Data lives here; mount a volume in compose.
 VOLUME /app/pb_data
 EXPOSE 8090
 
-# Serve runs migrations on first start; listen on all interfaces for Docker network.
-CMD ["./pocketbase", "serve", "--http=0.0.0.0:8090"]
+# Run migrations on every start, then serve. Script exits non-zero if migrate fails.
+CMD ["/app/start-pocketbase.sh"]

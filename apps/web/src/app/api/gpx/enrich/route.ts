@@ -2,18 +2,30 @@ import { NextResponse } from "next/server";
 import pb from "@/lib/pocketbase";
 import { getCurrentUserId } from "@/lib/auth";
 import { enrichGpxWithDemPerTrack } from "@/lib/dem";
+import type { EnrichedTrackSummary } from "@/lib/dem/types";
 import { buildEnhancementPerformance } from "@/lib/gpx/files";
 import {
   createCheckpointRecord,
   getResumableCheckpoint,
   updateJobProgress,
 } from "@/app/api/gpx/enrichment-checkpoint";
+import { saveEnrichmentArtifactFromPath } from "@/lib/enrichment/artifact";
+import {
+  assertIndexConsistency,
+  createNDJSONStreamWriter,
+  ensureTempFileRemoved,
+} from "@/lib/enrichment/artifact-stream";
 
 const COLLECTION = "gpx_files";
 const CHUNK_SIZE = 10_000;
 const WEIGHT_SETUP = 5;
 const WEIGHT_PARSING = 5;
 const WEIGHT_ENRICHMENT = 78;
+
+/** Above this point count we require async enrichment (avoid 413 and timeouts). */
+const SYNC_MAX_POINTS = 15_000;
+/** Above this track count we require async enrichment. */
+const SYNC_MAX_TRACKS = 50;
 
 export async function POST(request: Request) {
   const userId = await getCurrentUserId(request);
@@ -130,6 +142,52 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, jobId, resumed: isResume });
   }
 
+  const pointCount = Number((gpxRecord as { pointCount?: number }).pointCount) || 0;
+  const trackCount = Number((gpxRecord as { trackCount?: number }).trackCount) || 0;
+  if (pointCount > SYNC_MAX_POINTS || trackCount > SYNC_MAX_TRACKS) {
+    console.info(
+      `[gpx/enrich] Sync blocked (too large): fileId=${id} pointCount=${pointCount} trackCount=${trackCount} maxPoints=${SYNC_MAX_POINTS} maxTracks=${SYNC_MAX_TRACKS}; rerouting to async.`
+    );
+    const newJobId = crypto.randomUUID();
+    try {
+      const created = await createCheckpointRecord(pb, {
+        jobId: newJobId,
+        recordId: id,
+        userId,
+        totalPoints: 0,
+        chunkSize: CHUNK_SIZE,
+      });
+      await updateJobProgress(pb, newJobId, {
+        status: "running",
+        currentPhase: "enrichment",
+        currentPhasePercent: 0,
+        overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING,
+      }, created.id);
+    } catch (e) {
+      console.warn("[gpx/enrich] Reroute to async failed (checkpoint create):", e);
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "File is too large for sync enrichment. Please use async (background) enrichment.",
+          rerouted: false,
+          pointCount,
+          trackCount,
+          syncMaxPoints: SYNC_MAX_POINTS,
+          syncMaxTracks: SYNC_MAX_TRACKS,
+        },
+        { status: 413 }
+      );
+    }
+    return NextResponse.json({
+      ok: true,
+      jobId: newJobId,
+      rerouted: true,
+      message: "File too large for sync; enrichment started in background.",
+      pointCount,
+      trackCount,
+    });
+  }
+
   let record: { file: string };
   try {
     record = await pb.collection(COLLECTION).getOne(id);
@@ -205,8 +263,52 @@ export async function POST(request: Request) {
     "completed"
   );
 
+  const writer = createNDJSONStreamWriter();
+  for (const t of enrichedTracks) {
+    writer.writeTrack(t);
+  }
+  const { filePath: artifactPath, index: enrichmentArtifactIndex, fileSize: artifactFileSize } = await writer.finish();
+  try {
+    assertIndexConsistency(enrichmentArtifactIndex, artifactFileSize, "sync-enrich");
+  } catch (consistencyErr) {
+    console.error("[gpx/enrich] Sync artifact/index inconsistent", consistencyErr);
+    await ensureTempFileRemoved(artifactPath);
+    return NextResponse.json(
+      { ok: false, error: "Artifact index inconsistent." },
+      { status: 503 }
+    );
+  }
+  const enrichedTracksSummaryCompact = enrichedTracks.map(({ elevationProfileJson: _e, ...c }) => c);
+
+  try {
+    const { size: artifactSize } = await saveEnrichmentArtifactFromPath(pb, {
+      recordId: id,
+      userId,
+      filePath: artifactPath,
+      fileSize: artifactFileSize,
+    });
+    console.info(
+      `[gpx/enrich] Sync artifact persisted fileId=${id} size=${(artifactSize / 1024).toFixed(1)}KB tracks=${enrichedTracks.length}`
+    );
+  } catch (err) {
+    console.error("[gpx/enrich] Sync artifact save failed", err);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Enrichment was computed but could not be saved (artifact storage failed).",
+      },
+      { status: 503 }
+    );
+  } finally {
+    await ensureTempFileRemoved(artifactPath);
+  }
+
+  // Only update gpx_files after artifact success; keeps hasEnrichmentArtifact/summary consistent.
   const update: Record<string, unknown> = {
-    enrichedTracksJson: JSON.stringify(enrichedTracks),
+    enrichedTracksSummary: JSON.stringify(enrichedTracksSummaryCompact),
+    hasEnrichmentArtifact: true,
+    enrichmentArtifactIndex: JSON.stringify(enrichmentArtifactIndex),
+    enrichedTracksJson: "",
     distanceM: aggregates.distanceM,
     minElevationM: aggregates.minElevationM,
     maxElevationM: aggregates.maxElevationM,
@@ -219,11 +321,11 @@ export async function POST(request: Request) {
   try {
     await pb.collection(COLLECTION).update(id, update);
   } catch (err) {
-    console.error("[gpx/enrich] update record", err);
+    console.error("[gpx/enrich] Sync update record failed", err);
     return NextResponse.json({
-      ok: true,
-      warning: "Elevation was computed but could not be saved to the record.",
-    });
+      ok: false,
+      error: "Enrichment was saved to artifact but record update failed.",
+    }, { status: 503 });
   }
 
   return NextResponse.json({ ok: true });

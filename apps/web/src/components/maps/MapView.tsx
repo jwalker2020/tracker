@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
-import type { GpxFileRecordForDisplay } from "@/lib/gpx";
-import { getDisplayGeometry } from "@/lib/gpx";
+import type { EnrichedTrackSummaryForDisplay, GpxFileRecordForDisplay } from "@/lib/gpx";
+import { getDisplayGeometry, parseEnrichedTrackSliceToDisplay } from "@/lib/gpx";
 import { DEFAULT_BASEMAP_ID, getBasemapById } from "@/lib/maps/basemaps";
 import {
   DEFAULT_OVERLAY_OPACITY,
@@ -618,6 +618,17 @@ export function MapView({
       : baseTileUrl;
   const tileAttribution = typeof basemap?.attribution === "string" ? basemap.attribution : FALLBACK_ATTRIBUTION;
   const [selectedTrack, setSelectedTrack] = useState<SelectedTrack | null>(null);
+  const [artifactTracksByFileId, setArtifactTracksByFileId] = useState<
+    Record<string, EnrichedTrackSummaryForDisplay[]>
+  >({});
+  /** Per-track "fileId-trackIndex" -> failure timestamp. Retry allowed after RETRY_AFTER_MS. Cleared when files list ref changes. */
+  const artifactLoadFailedTrackTimestamps = useRef<Map<string, number>>(new Map());
+  const RETRY_AFTER_MS = 10_000;
+  const prevFilesRef = useRef(files);
+  if (prevFilesRef.current !== files) {
+    prevFilesRef.current = files;
+    artifactLoadFailedTrackTimestamps.current.clear();
+  }
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [selectedTrackPoints, setSelectedTrackPoints] = useState<[number, number][] | null>(null);
   const [chartDistanceRange, setChartDistanceRange] = useState<{ minD: number; maxD: number } | null>(null);
@@ -657,14 +668,99 @@ export function MapView({
     };
   }, [files, selectedTrack]);
 
+  useEffect(() => {
+    if (!selectedTrack) return;
+    const file = files.find((f) => f.id === selectedTrack.fileId);
+    if (!file?.hasEnrichmentArtifact) return;
+    const trackKey = `${file.id}-${selectedTrack.trackIndex}`;
+    const failedAt = artifactLoadFailedTrackTimestamps.current.get(trackKey);
+    if (failedAt != null && Date.now() - failedAt < RETRY_AFTER_MS) return;
+    const existing = artifactTracksByFileId[file.id];
+    if (existing?.[selectedTrack.trackIndex]?.elevationProfileJson != null) return;
+    let cancelled = false;
+    const fetchStart = typeof performance !== "undefined" ? performance.now() : 0;
+    const url = `/api/gpx/files/${file.id}/enrichment-artifact?trackIndex=${selectedTrack.trackIndex}`;
+    fetch(url, { credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) return { ok: false as const, json: null, status: res.status };
+        const json = await res.text();
+        const sizeHeader = res.headers.get("X-Artifact-Size-Bytes");
+        const sliceBytes = sizeHeader != null ? parseInt(sizeHeader, 10) : null;
+        return { ok: true as const, json: json || null, sliceBytes: Number.isNaN(sliceBytes as number) ? null : sliceBytes };
+      })
+      .then((result) => {
+        if (cancelled) return;
+        const fetchMs = typeof performance !== "undefined" ? performance.now() - fetchStart : 0;
+        if (!result.ok || !result.json) {
+          artifactLoadFailedTrackTimestamps.current.set(trackKey, Date.now());
+          const statusCode = !result.ok && "status" in result ? (result as { status: number }).status : undefined;
+          console.warn("[MapView] Per-track artifact fetch failed; summary-only fallback.", {
+            fileId: file.id,
+            trackIndex: selectedTrack.trackIndex,
+            status: statusCode,
+            fetchMs: fetchMs.toFixed(0),
+          });
+          return;
+        }
+        const parseStart = typeof performance !== "undefined" ? performance.now() : 0;
+        const oneTrack = parseEnrichedTrackSliceToDisplay(result.json);
+        const parseMs = typeof performance !== "undefined" ? performance.now() - parseStart : 0;
+        if (oneTrack) {
+          if (process.env.NODE_ENV === "development" || fetchMs > 500 || (result.sliceBytes != null && result.sliceBytes > 500_000)) {
+            console.info("[MapView] Per-track artifact success", {
+              fileId: file.id,
+              trackIndex: selectedTrack.trackIndex,
+              sliceBytes: result.sliceBytes ?? "unknown",
+              fetchMs: fetchMs.toFixed(0),
+              parseMs: parseMs.toFixed(0),
+            });
+          }
+          const base = file.enrichedTracks ?? existing ?? [];
+          const merged = base.length > 0 ? base.map((t, i) => (i === selectedTrack.trackIndex ? oneTrack : t)) : [];
+          if (merged.length <= selectedTrack.trackIndex) {
+            merged[selectedTrack.trackIndex] = oneTrack;
+          }
+          setArtifactTracksByFileId((prev) => ({ ...prev, [file.id]: merged }));
+          artifactLoadFailedTrackTimestamps.current.delete(trackKey);
+        } else {
+          artifactLoadFailedTrackTimestamps.current.set(trackKey, Date.now());
+          console.warn("[MapView] Per-track artifact parse failed; summary-only fallback.", {
+            fileId: file.id,
+            trackIndex: selectedTrack.trackIndex,
+            fetchMs: fetchMs.toFixed(0),
+            parseMs: parseMs.toFixed(0),
+          });
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          artifactLoadFailedTrackTimestamps.current.set(trackKey, Date.now());
+          const fetchMs = typeof performance !== "undefined" ? performance.now() - fetchStart : 0;
+          console.warn("[MapView] Per-track artifact fetch error; summary-only fallback.", {
+            fileId: file.id,
+            trackIndex: selectedTrack.trackIndex,
+            error: err instanceof Error ? err.message : String(err),
+            fetchMs: fetchMs.toFixed(0),
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [files, selectedTrack, artifactTracksByFileId]);
+
   const selectedProfile = useMemo(() => {
     if (!selectedTrack) return null;
     const file = files.find((f) => f.id === selectedTrack.fileId);
-    const track = file?.enrichedTracks?.[selectedTrack.trackIndex];
+    const tracks =
+      file?.id && artifactTracksByFileId[file.id] != null
+        ? artifactTracksByFileId[file.id]
+        : file?.enrichedTracks;
+    const track = tracks?.[selectedTrack.trackIndex];
     if (!track) return null;
     const profilePoints = parseProfileJson(track.elevationProfileJson);
     return { trackName: track.name, profilePoints, track };
-  }, [files, selectedTrack]);
+  }, [files, selectedTrack, artifactTracksByFileId]);
 
   const onHoverIndex = useCallback((index: number | null) => {
     setHoveredIndex((prev) => (index === prev ? prev : index));

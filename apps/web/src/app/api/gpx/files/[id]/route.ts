@@ -43,6 +43,18 @@ export async function DELETE(
   }
 
   try {
+    const list = await pb.collection("enrichment_artifacts").getList(1, 1, {
+      filter: `recordId = "${id}"`,
+    });
+    const artifact = list.items[0];
+    if (artifact?.id) {
+      await pb.collection("enrichment_artifacts").delete(artifact.id);
+    }
+  } catch (e) {
+    console.warn("[DELETE /api/gpx/files/:id] Enrichment artifact delete (continuing):", e);
+  }
+
+  try {
     await pb.collection(COLLECTION).delete(id);
   } catch (e) {
     console.error("[DELETE /api/gpx/files/:id]", e);

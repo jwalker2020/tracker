@@ -10,8 +10,6 @@
     "enrichment-worker": "node --env-file=.env.local --import tsx scripts/enrichment-worker.ts"
   },
   "dependencies": {
-    "echarts": "^5.5.0",
-    "echarts-for-react": "^3.0.2",
     "@tmcw/togeojson": "^7.1.2",
     "@turf/along": "^7.3.4",
     "@turf/bbox": "^7.3.4",
@@ -22,6 +20,9 @@
     "@turf/length": "^7.3.4",
     "@xmldom/xmldom": "^0.8.11",
     "date-fns": "^4.1.0",
+    "echarts": "^5.5.0",
+    "echarts-for-react": "^3.0.2",
+    "form-data": "^4.0.5",
     "geotiff": "^3.0.4",
     "leaflet": "^1.9.4",
     "next": "^16.1.0",
@@ -33,7 +34,6 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "tsx": "^4.19.0",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/geojson": "^7946.0.16",
     "@types/leaflet": "^1.9.8",
@@ -41,6 +41,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.0.0"
   }
 }

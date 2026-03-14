@@ -58,7 +58,7 @@ export type ElevationStats = {
   totalCount: number;
 };
 
-/** Per-track enrichment result (internal: meters). Stored in enrichedTracksJson. */
+/** Per-track enrichment result (internal: meters). Stored in enrichedTracksJson or artifact. */
 export type EnrichedTrackSummary = {
   trackIndex: number;
   name: string;
@@ -81,3 +81,6 @@ export type EnrichedTrackSummary = {
   /** JSON array of { d: distanceM, e: elevationM } for this track only. */
   elevationProfileJson: string | null;
 };
+
+/** Compact per-track summary (no profile). Stored in gpx_files.enrichedTracksSummary for list/filter. */
+export type EnrichedTrackSummaryCompact = Omit<EnrichedTrackSummary, "elevationProfileJson">;

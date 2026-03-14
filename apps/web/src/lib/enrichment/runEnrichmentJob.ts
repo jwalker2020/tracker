@@ -5,6 +5,7 @@
  */
 
 import type PocketBase from "pocketbase";
+import type { EnrichedTrackSummaryCompact } from "@/lib/dem/types";
 import { enrichGpxWithDemPerTrack } from "@/lib/dem";
 import { buildEnhancementPerformance } from "@/lib/gpx/files";
 import {
@@ -14,6 +15,12 @@ import {
   markCheckpointFailed,
   updateJobProgress,
 } from "@/app/api/gpx/enrichment-checkpoint";
+import { saveEnrichmentArtifactFromPath } from "./artifact";
+import {
+  assertIndexConsistency,
+  createNDJSONStreamWriter,
+  ensureTempFileRemoved,
+} from "./artifact-stream";
 
 const COLLECTION = "gpx_files";
 const PROGRESS_WRITE_THROTTLE_MS = 1_500;
@@ -159,8 +166,9 @@ export async function runEnrichmentJob(
     logMemoryUsage(logContext);
     memoryLogIntervalId = setInterval(() => logMemoryUsage(logContext), MEMORY_LOG_INTERVAL_MS);
 
-    let enrichedTracksJson = "[";
-    let firstTrack = true;
+    const ndjsonWriter = createNDJSONStreamWriter();
+    let profilePointCount = 0;
+    const enrichedTracksSummaryCompact: EnrichedTrackSummaryCompact[] = [];
     let result: Awaited<ReturnType<typeof enrichGpxWithDemPerTrack>>;
     try {
       result = await enrichGpxWithDemPerTrack(gpxText, {
@@ -185,9 +193,17 @@ export async function runEnrichmentJob(
           });
         },
         onTrackComplete: (summary) => {
-          if (!firstTrack) enrichedTracksJson += ",";
-          enrichedTracksJson += JSON.stringify(summary);
-          firstTrack = false;
+          ndjsonWriter.writeTrack(summary);
+          if (summary.elevationProfileJson) {
+            try {
+              const arr = JSON.parse(summary.elevationProfileJson) as unknown[];
+              profilePointCount += Array.isArray(arr) ? arr.length : 0;
+            } catch {
+              // ignore
+            }
+          }
+          const { elevationProfileJson: _, ...compact } = summary;
+          enrichedTracksSummaryCompact.push(compact);
         },
       });
     } catch (enrichErr) {
@@ -209,121 +225,169 @@ export async function runEnrichmentJob(
     }
 
     const { aggregates, trackCount = result.enrichedTracks.length, totalPoints: resultTotalPoints, hasAnyValidData: resultHasValid } = result;
-    enrichedTracksJson += "]";
     const numTracks = trackCount;
-    const hasAnyValidData = resultHasValid ?? result.enrichedTracks.some((t) => t.validCount > 0);
-    const totalPoints = resultTotalPoints ?? result.enrichedTracks.reduce((s, t) => s + t.pointCount, 0);
+    let artifactPath: string | null = null;
+    try {
+      const finishResult = await ndjsonWriter.finish();
+      artifactPath = finishResult.filePath;
+      const { index: enrichmentArtifactIndex, fileSize: artifactFileSize } = finishResult;
 
-    if (numTracks === 0) {
-      await writeProgress({ status: "failed", error: "No tracks found in GPX." });
       try {
-        await markCheckpointFailed(pb, recordId, jobId, "No tracks found in GPX.", true);
+        assertIndexConsistency(enrichmentArtifactIndex, artifactFileSize, "runEnrichmentJob");
+      } catch (consistencyErr) {
+        demLog(`Artifact/index inconsistent: ${consistencyErr instanceof Error ? consistencyErr.message : String(consistencyErr)}`);
+        await writeProgress({ status: "failed", error: "Artifact index inconsistent." });
+        try {
+          await markCheckpointFailed(pb, recordId, jobId, "Artifact index inconsistent.", false);
+        } catch (e) {
+          console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+        }
+        throw consistencyErr;
+      }
+
+      const hasAnyValidData = resultHasValid ?? result.enrichedTracks.some((t) => t.validCount > 0);
+      const totalPoints = resultTotalPoints ?? result.enrichedTracks.reduce((s, t) => s + t.pointCount, 0);
+
+      if (numTracks === 0) {
+        await writeProgress({ status: "failed", error: "No tracks found in GPX." });
+        try {
+          await markCheckpointFailed(pb, recordId, jobId, "No tracks found in GPX.", true);
+        } catch (e) {
+          console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+        }
+        return;
+      }
+      if (!hasAnyValidData) {
+        const reason = "All samples were nodata or out of extent for every track.";
+        await writeProgress({ status: "failed", error: reason });
+        try {
+          await markCheckpointFailed(pb, recordId, jobId, reason, true);
+        } catch (e) {
+          console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+        }
+        return;
+      }
+
+      if (await isCancelled()) {
+        await writeProgress({ status: "cancelled" });
+        return;
+      }
+      await writeProgress({
+        currentPhase: "saving",
+        currentPhasePercent: 0,
+        overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING + WEIGHT_ENRICHMENT,
+        totalTracks: numTracks,
+      });
+
+      demLog("Saving enrichment results to record...");
+      const enhancementEndMs = Date.now();
+      const performance = buildEnhancementPerformance(
+        enhancementStartMs,
+        enhancementEndMs,
+        numTracks,
+        totalPoints,
+        "completed",
+        totalPoints,
+        "completed"
+      );
+      if (await isCancelled()) {
+        return;
+      }
+      const performanceJsonStr = JSON.stringify(performance);
+      const summarySize = Buffer.byteLength(JSON.stringify(enrichedTracksSummaryCompact), "utf8");
+      demLog(
+        `Summary size: ${(summarySize / 1024).toFixed(1)}KB tracks=${enrichedTracksSummaryCompact.length} profilePoints=${profilePointCount}`
+      );
+
+      // Artifact must succeed before we touch gpx_files; avoids inconsistent hasEnrichmentArtifact/summary state.
+      try {
+        const { id: artifactId, size: artifactSize } = await saveEnrichmentArtifactFromPath(pb, {
+          recordId,
+          userId: job.userId ?? null,
+          filePath: artifactPath,
+          fileSize: artifactFileSize,
+        });
+        demLog(
+          `Artifact persisted: id=${artifactId} size=${(artifactSize / 1024 / 1024).toFixed(2)}MB tracks=${numTracks} profilePoints=${profilePointCount}`
+        );
+      } catch (artifactErr) {
+        demLog(`Artifact persistence failed: ${artifactErr instanceof Error ? artifactErr.message : String(artifactErr)}`);
+        await writeProgress({ status: "failed", error: "Could not save enrichment artifact." });
+        try {
+          await markCheckpointFailed(pb, recordId, jobId, "Could not save enrichment artifact.", false);
+        } catch (e) {
+          console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+        }
+        throw artifactErr;
+      }
+
+      const update: Record<string, unknown> = {
+        enrichedTracksSummary: JSON.stringify(enrichedTracksSummaryCompact),
+        hasEnrichmentArtifact: true,
+        performanceJson: performanceJsonStr,
+        enrichedTracksJson: "",
+        enrichmentArtifactIndex: JSON.stringify(enrichmentArtifactIndex),
+      };
+      const numericFields: Array<[key: string, value: number]> = [
+        ["distanceM", aggregates.distanceM],
+        ["minElevationM", aggregates.minElevationM],
+        ["maxElevationM", aggregates.maxElevationM],
+        ["totalAscentM", aggregates.totalAscentM],
+        ["totalDescentM", aggregates.totalDescentM],
+        ["averageGradePct", aggregates.averageGradePct],
+      ];
+      for (const [key, value] of numericFields) {
+        if (typeof value === "number" && Number.isFinite(value)) {
+          update[key] = value;
+        }
+      }
+
+      try {
+        await pb.collection(COLLECTION).update(recordId, update);
+      } catch (updateErr: unknown) {
+        const err = updateErr as { response?: { data?: unknown }; data?: unknown };
+        const detail = err?.response?.data ?? err?.data;
+        const detailStr = detail != null ? ` ${JSON.stringify(detail)}` : "";
+        demLog(`PocketBase gpx_files update failed: ${updateErr instanceof Error ? updateErr.message : String(updateErr)}${detailStr}`);
+        throw updateErr;
+      }
+      await writeProgress({
+        currentPhase: "saving",
+        currentPhasePercent: 80,
+        overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING + WEIGHT_ENRICHMENT + Math.round(WEIGHT_SAVING * 0.8),
+      });
+      try {
+        await markCheckpointCompleted(pb, recordId, jobId);
       } catch (e) {
-        console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+        console.warn("[gpx/enrich] Checkpoint mark completed failed:", e);
       }
-      return;
-    }
-    if (!hasAnyValidData) {
-      const reason = "All samples were nodata or out of extent for every track.";
-      await writeProgress({ status: "failed", error: reason });
       try {
-        await markCheckpointFailed(pb, recordId, jobId, reason, true);
+        await updateJobProgress(pb, jobId, {
+          status: "completed",
+          currentPhase: "completed",
+          currentPhasePercent: 100,
+          overallPercentComplete: 100,
+          processedPoints: totalPoints,
+          totalPoints: totalPoints,
+        }, checkpointRecordId);
       } catch (e) {
-        console.warn("[gpx/enrich] Checkpoint mark failed:", e);
+        demLog(`Failed to mark job completed (job will be reclaimed): ${e instanceof Error ? e.message : String(e)}`);
+        await writeProgress({ status: "failed", error: "Could not persist job completion." });
+        try {
+          await markCheckpointFailed(pb, recordId, jobId, "Could not persist job completion.", false);
+        } catch (e2) {
+          console.warn("[gpx/enrich] Mark checkpoint failed after completion write error:", e2);
+        }
+        throw e;
       }
-      return;
+      demLog(
+        `Cancellation checks: ${cancelChecksTotal} total, ${cancelFetchesActual} PocketBase fetches (throttled)`
+      );
+      logMemoryUsage(logContext);
+      demLog("Enrichment results saved. Job completed.");
+    } finally {
+      if (artifactPath != null) await ensureTempFileRemoved(artifactPath);
     }
-
-    if (await isCancelled()) {
-      await writeProgress({ status: "cancelled" });
-      return;
-    }
-    await writeProgress({
-      currentPhase: "saving",
-      currentPhasePercent: 0,
-      overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING + WEIGHT_ENRICHMENT,
-      totalTracks: numTracks,
-    });
-
-    demLog("Saving enrichment results to record...");
-    const enhancementEndMs = Date.now();
-    const performance = buildEnhancementPerformance(
-      enhancementStartMs,
-      enhancementEndMs,
-      numTracks,
-      totalPoints,
-      "completed",
-      totalPoints,
-      "completed"
-    );
-    if (await isCancelled()) {
-      return;
-    }
-    const performanceJsonStr = JSON.stringify(performance);
-    const update: Record<string, unknown> = {
-      enrichedTracksJson,
-      performanceJson: performanceJsonStr,
-    };
-    const numericFields: Array<[key: string, value: number]> = [
-      ["distanceM", aggregates.distanceM],
-      ["minElevationM", aggregates.minElevationM],
-      ["maxElevationM", aggregates.maxElevationM],
-      ["totalAscentM", aggregates.totalAscentM],
-      ["totalDescentM", aggregates.totalDescentM],
-      ["averageGradePct", aggregates.averageGradePct],
-    ];
-    for (const [key, value] of numericFields) {
-      if (typeof value === "number" && Number.isFinite(value)) {
-        update[key] = value;
-      }
-    }
-    try {
-      await pb.collection(COLLECTION).update(recordId, update);
-    } catch (updateErr: unknown) {
-      const err = updateErr as { response?: { data?: unknown }; data?: unknown };
-      const detail = err?.response?.data ?? err?.data;
-      const detailStr = detail != null ? ` ${JSON.stringify(detail)}` : "";
-      demLog(`PocketBase update failed: ${updateErr instanceof Error ? updateErr.message : String(updateErr)}${detailStr}`);
-      if (enrichedTracksJson.length > 9_000_000) {
-        demLog(`enrichedTracksJson length: ${enrichedTracksJson.length} (max 10_000_000)`);
-      }
-      throw updateErr;
-    }
-    await writeProgress({
-      currentPhase: "saving",
-      currentPhasePercent: 80,
-      overallPercentComplete: WEIGHT_SETUP + WEIGHT_PARSING + WEIGHT_ENRICHMENT + Math.round(WEIGHT_SAVING * 0.8),
-    });
-    try {
-      await markCheckpointCompleted(pb, recordId, jobId);
-    } catch (e) {
-      console.warn("[gpx/enrich] Checkpoint mark completed failed:", e);
-    }
-    // Critical: mark job completed so the worker does not reclaim it. Do not use writeProgress (it swallows errors).
-    try {
-      await updateJobProgress(pb, jobId, {
-        status: "completed",
-        currentPhase: "completed",
-        currentPhasePercent: 100,
-        overallPercentComplete: 100,
-        processedPoints: totalPoints,
-        totalPoints: totalPoints,
-      }, checkpointRecordId);
-    } catch (e) {
-      demLog(`Failed to mark job completed (job will be reclaimed): ${e instanceof Error ? e.message : String(e)}`);
-      await writeProgress({ status: "failed", error: "Could not persist job completion." });
-      try {
-        await markCheckpointFailed(pb, recordId, jobId, "Could not persist job completion.", false);
-      } catch (e2) {
-        console.warn("[gpx/enrich] Mark checkpoint failed after completion write error:", e2);
-      }
-      throw e;
-    }
-    demLog(
-      `Cancellation checks: ${cancelChecksTotal} total, ${cancelFetchesActual} PocketBase fetches (throttled)`
-    );
-    logMemoryUsage(logContext);
-    demLog("Enrichment results saved. Job completed.");
   } catch (err) {
     if (memoryLogIntervalId != null) {
       clearInterval(memoryLogIntervalId);
