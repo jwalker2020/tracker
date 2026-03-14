@@ -119,7 +119,8 @@ function FitToSelection({
     for (let i = 1; i < boundsList.length; i++) {
       combined.extend(boundsList[i]!);
     }
-    const padding = 24;
+    // Small padding so selected files fill the map tightly (was 24, left too much empty space).
+    const padding = 12;
     const fitOptions: L.FitBoundsOptions = {
       maxZoom,
       ...(bottomPaddingPx > 0
