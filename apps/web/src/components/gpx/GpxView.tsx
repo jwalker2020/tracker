@@ -147,7 +147,7 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
             : NaN;
         const maximumGrade =
           Number.isFinite(rawMaxGrade)
-            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, rawMaxGrade)))
+            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, rawMaxGrade))
             : NaN;
         const rawCurviness =
           typeof t?.averageCurvinessDegPerMile === "number" &&
@@ -235,7 +235,7 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
             : NaN;
         const maximumGrade =
           Number.isFinite(rawMaxGrade)
-            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, rawMaxGrade)))
+            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, rawMaxGrade))
             : NaN;
         const rawCurviness =
           typeof t?.averageCurvinessDegPerMile === "number" &&
