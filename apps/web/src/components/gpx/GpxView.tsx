@@ -120,10 +120,9 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
     }
   }, [selectedIds, refetch]);
 
-  const selectedFiles = orderedFileIds
-    .filter((id) => selectedIds.has(id))
-    .map((id) => files.find((f) => f.id === id))
-    .filter((f): f is GpxFileRecordForDisplay => f != null);
+  const selectedFiles = files
+    .filter((f) => selectedIds.has(f.id))
+    .sort((a, b) => orderedFileIds.indexOf(a.id) - orderedFileIds.indexOf(b.id));
 
   /** Grade is percent (0–100); clamp to avoid bad data showing as e.g. 1M%. */
   const GRADE_PCT_CLAMP = 100;
