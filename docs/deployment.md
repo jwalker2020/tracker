@@ -52,7 +52,7 @@ Set in `docker-compose.yml` or in Coolify for each service:
 
 ## Enrichment artifact upload (server-only rules)
 
-The worker and the sync enrich API create/update records in the `enrichment_artifacts` collection. So that they can do this without admin auth, the collection rules are relaxed for server-only access:
+Sync and async enrichment both write full detail to the **`enrichment_artifacts`** collection (NDJSON file per GPX file) and then update **`gpx_files`** with `hasEnrichmentArtifact`, `enrichmentArtifactIndex`, and `enrichedTracksSummary`. The worker and the sync enrich API create/update records in `enrichment_artifacts`. So that they can do this without admin auth, the collection rules are relaxed for server-only access:
 
 1. **Run migrations**  
    Migrations run automatically when the PocketBase container starts (see `apps/pb/start-pocketbase.sh`). The migration `1790000006_enrichment_artifacts_allow_server_api.js` sets `listRule`, `viewRule`, `createRule`, and `updateRule` to empty string (`""`), which in PocketBase means “anyone can perform the action” (guests, authenticated users, admins).

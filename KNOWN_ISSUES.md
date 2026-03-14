@@ -2,7 +2,7 @@
 
 This file tracks known bugs, limitations, and operational concerns so maintainers and reviewers can quickly see current risk areas without rediscovering them. When an issue listed here is fixed, remove it from this file and reference the fix in commit or release notes.
 
-Last updated: 2025-03-10
+Last updated: 2026-03-10
 
 ---
 
@@ -12,10 +12,9 @@ Last updated: 2025-03-10
   - If a GPX file contains no `<ele>` and DEM is not configured (or the track is outside DEM coverage), enrichment runs but produces no elevation stats.
   - The API may return an “all nodata / out of extent”–style warning and skip persisting elevation stats. This is by design.
 
-- **Very large tracks can exceed PocketBase limits**
-  - `enrichedTracksJson` can become very large for very long tracks.
-  - PocketBase request/field size limits may cause save failures.
-  - The worker logs warnings when payload size approaches ~10M characters after a failed save attempt.
+- **Very large artifacts can exceed PocketBase upload limits**
+  - Full enrichment detail is stored in `enrichment_artifacts` (NDJSON file). PocketBase request/body limits apply to the artifact file upload.
+  - Very large files (many tracks or very long tracks) may hit limits; the worker logs upload success or failure. No chunked multi-file artifact design yet.
 
 - **GPX elevation units**
   - GPX elevation is assumed to be in meters (per GPX 1.1); there is no detection or conversion for feet.
@@ -24,9 +23,8 @@ Last updated: 2025-03-10
 
 ## Performance / Scalability
 
-- **Large enrichedTracksJson payloads**
-  - File-record responses (e.g. `GET /api/gpx/files`) include `enrichedTracksJson`, so large tracks increase payload size.
-  - This can slow page load and client-side parsing.
+- **List payload**
+  - `GET /api/gpx/files` returns summary data only (`enrichedTracksSummary`, `hasEnrichmentArtifact`). Full profile data is loaded per track via `GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`, so list size is bounded.
 
 - **Single job per worker process**
   - The enrichment worker runs one job at a time per process.
@@ -73,17 +71,20 @@ Last updated: 2025-03-10
 
 ## Technical Debt
 
-- **Dual enrichment pipelines**
-  - `lib/gpx/enrich.ts` (to-GeoJSON + legacy stats) vs `lib/dem/enrich-elevation.ts` (per-track DEM/GPX pipeline).
-  - Map/display use enriched geometry and per-track data; worth consolidating or documenting which flows use which path.
-
-- **Legacy elevationProfileJson**
-  - File-level or per-track `elevationProfileJson` is legacy; `enrichedTracksJson` is primary.
-  - Display prefers `enrichedTracksJson` when available; legacy remains supported. Should be deprecated or removed once all consumers are confirmed.
-
 - **Partial resume not implemented**
   - Checkpoint state exists in the DEM lib, but the worker runs each job from the start of the track list.
   - No partial file-level resume (e.g. after crash mid-run).
+
+- **Client artifact parse**
+  - The client parses the per-track artifact response as JSON text (one track object). No formal schema validation; acceptable for current slice shape.
+
+---
+
+## Debugging “Elevation profile not available for this track”
+
+- **Cause**: Charts need per-track detail from `GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`. The message appears when (1) the file list never had `hasEnrichmentArtifact: true` (list not refetched after enrichment, or list API not passing the flag), (2) the artifact request failed (4xx/5xx or network), or (3) the slice response failed to parse.
+- **Checks**: In the browser Network tab, confirm a request to `.../enrichment-artifact?trackIndex=...` for the selected track (not only `.../file`). If the artifact request never appears, the file in client state likely lacks `hasEnrichmentArtifact` — refetch the file list or refresh. Check console for “[MapView] Per-track artifact fetch failed” or “parse failed”; failed loads are retried after a cooldown.
+- **Full guide**: See **PROJECT_CONTEXT.md** section “Debugging enrichment and profiles” for persistence, artifact slice API, and client loading.
 
 ---
 
@@ -92,7 +93,6 @@ Last updated: 2025-03-10
 Items already noted in project docs; not speculative:
 
 - **Partial resume from checkpoints** — Worker resumes from last persisted checkpoint per track after a crash instead of restarting the full file.
-- **Large-track downsampling** — Downsample or cap profile points for storage to avoid PocketBase limits and slow responses.
-- **Consolidating enrichment paths** — Unify or clearly document `lib/gpx/enrich.ts` vs `lib/dem/enrich-elevation.ts`.
+- **Large-track / artifact handling** — Downsample or cap profile points if artifact upload limits become an issue; no chunked multi-file artifact design yet.
 - **Improved error reporting in UI** — Surface enrichment warnings (e.g. all nodata, could not save) in the UI (toast or inline), not only in the API response.
-- **Deprecate legacy elevationProfileJson** — Once all consumers use `enrichedTracksJson`.
+- **Optional retry UX for profile load** — Explicit “Retry” to clear cooldown and refetch the artifact slice when “Elevation profile not available” is shown.

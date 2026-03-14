@@ -26,14 +26,14 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 - **`apps/web`** – Next.js app: API routes, server and client components, libs.
 - **`apps/web/src/lib`** – Core logic:
   - **`dem/`** – GPX extraction (`gpx-extract`), DEM tile index, raster sampling, elevation enrichment (per-track and GPX-only), elevation stats, curviness/grade helpers.
-  - **`gpx/`** – Parse, enrich (legacy to-GeoJSON path), geometry fetch, file records, validation.
-  - **`enrichment/`** – Job executor (`runEnrichmentJob`) and worker loop; worker process polls for jobs and runs enrichment (calls DEM lib, writes progress/cancel to PocketBase).
+  - **`gpx/`** – Parse, geometry fetch, file records (including `gpxRecordToDisplay`: summary + `hasEnrichmentArtifact`), validation.
+  - **`enrichment/`** – Job executor (`runEnrichmentJob`), artifact streaming (NDJSON to temp file, upload to PocketBase), worker loop; worker polls for jobs and runs enrichment (calls DEM lib, writes progress/cancel and artifact to PocketBase).
   - **`auth`** – Get current user from PocketBase cookie (or optional `GUEST_USER_ID` for dev).
   - **`maps/`** – Basemap/hillshade config, overlays.
   - **`units`** – Meter ↔ feet for display.
 - **`apps/web/src/components`** – UI: GPX upload/list/view, track filters, elevation/grade/curviness profiles, map view.
 - **`apps/web/src/app/api`** – REST-style API for auth, GPX CRUD, upload, enrich, enrichment progress, and cancel.
-- **`apps/pb`** – PocketBase app (migrations, data). Serves API, stores `gpx_files` and `enrichment_jobs`.
+- **`apps/pb`** – PocketBase app (migrations, data). Serves API, stores `gpx_files`, `enrichment_jobs`, and `enrichment_artifacts`.
 - **`tools/dem`** – Scripts to build DEM manifest and download tiles (e.g. for a region).
 
 ---
@@ -41,11 +41,13 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 ## Important API routes
 
 - **`POST /api/auth/login`** – Authenticate with PocketBase; sets auth cookie.
-- **`GET /api/gpx/files`** – List GPX file records for the current user (with active job ids for progress).
+- **`GET /api/gpx/files`** – List GPX file records for the current user (with active job ids and `hasEnrichmentArtifact`). Returns summary data only; no full profile payloads.
+- **`GET /api/gpx/files/[id]/file`** – Raw GPX file bytes (ownership checked).
+- **`GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`** – One track’s enrichment detail (profile JSON, etc.) from the NDJSON artifact; used for charts. No full-artifact fetch exists.
 - **`PATCH /api/gpx/files`** – Reorder files (ownership checked per record).
 - **`POST /api/gpx/upload`** – Upload GPX; creates `gpx_files` record with current user as owner.
 - **`DELETE /api/gpx/files/[id]`** – Delete file; verifies owner, cancels any active enrichment for that file.
-- **`POST /api/gpx/enrich`** – Start enrichment (sync or async). When `DEM_BASE_PATH` is unset, **GPX-only enrichment** (elevation from GPX `<ele>` only).
+- **`POST /api/gpx/enrich`** – Start enrichment (sync or async; large sync jobs are rerouted to async). When `DEM_BASE_PATH` is unset, **GPX-only enrichment** (elevation from GPX `<ele>` only).
 - **`GET /api/gpx/enrichment-progress?jobId=...`** – Poll progress for a job; returns status, phase, percent; ownership checked via job’s `userId`.
 - **`POST /api/gpx/enrichment-cancel`** – Cancel a running job; body includes `recordId`; ownership verified against the GPX record.
 
@@ -53,12 +55,22 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 
 ## GPX enrichment pipeline
 
-- **Entry**: `POST /api/gpx/enrich` (sync or async). Async jobs are run by a **separate worker process** (`pnpm run enrichment-worker`); the web app creates the job and returns `jobId`; the worker polls for claimable jobs and runs `runEnrichmentJob`.
+- **Entry**: `POST /api/gpx/enrich` (sync or async). Large sync jobs are rerouted to async. Async jobs are run by a **separate worker process** (`pnpm run enrichment-worker`); the web app creates the job and returns `jobId`; the worker polls for claimable jobs and runs `runEnrichmentJob`.
 - **Parsing**: Server-side `extractTracks()` (in `lib/dem/gpx-extract`) parses GPX XML: per `<trk>`/`<rte>`, collects `<trkpt>`/`<rtept>` with lat, lon, and optional `<ele>`. **Parser behavior**: standard `getElementsByTagName("ele")` (and `"name"`) first; only when that returns no element does the code fall back to **local-name matching** (so namespaced GPX 1.1 e.g. Strava works). **Geometry**: GPX lat/lon is always authoritative for positions; DEM affects only elevation, not coordinates.
 - **Elevation source priority**: (1) **GPX `<ele>`** — used when present and valid (finite number). (2) **DEM sampling** — only when GPX elevation is missing or invalid, and `DEM_BASE_PATH` is set and the point is in DEM extent. (3) **Missing** — otherwise the point has no elevation; stats aggregate over valid points only. When `DEM_BASE_PATH` is unset, **GPX-only enrichment**: no DEM tile reads; elevation and metrics from GPX geometry and `<ele>` only.
 - **Per-track flow**: Each track is enriched separately. With DEM: optional resampling at fixed spacing, cumulative distance along line, DEM sampling for points without GPX ele, smoothing, then elevation stats and profile. GPX-only: cumulative distance along raw points (zero-length segments handled), GPX elevation, same stats/profile pipeline.
-- **Output**: Per-track summary (distance, min/max elevation, ascent/descent, average/max grade, curviness, elevation profile JSON) and file-level aggregates; written to `gpx_files` (and optionally checkpoint for resume).
 - **Duplicate / zero-distance**: Cumulative distance uses segment length (duplicate consecutive points add 0). Stats and max-grade logic skip zero or tiny segments; curviness uses collapsed duplicate points for turn-angle computation.
+
+### Enrichment storage model
+
+- **`gpx_files`** holds **lightweight summaries only**: `enrichedTracksSummary` (per-track stats, no profile points), `hasEnrichmentArtifact`, and `enrichmentArtifactIndex` (byte offsets per track into the artifact). Inline `enrichedTracksJson` is no longer the primary path; it is cleared when artifact-backed enrichment is used.
+- **`enrichment_artifacts`** holds the **full detail**: one record per GPX file, with an **NDJSON** file (one JSON line per track). The index on `gpx_files` gives `{ trackIndex, start, length }` so the API can serve a single track’s slice without loading the whole artifact.
+- **Write path (sync and async)**: Both use the same artifact-backed model. Enriched tracks are streamed to a temp file as NDJSON; the artifact file is then streamed to PocketBase. Only after a successful artifact upload are `gpx_files` updated with `hasEnrichmentArtifact`, `enrichmentArtifactIndex`, and `enrichedTracksSummary`.
+
+### Enrichment read path
+
+- **List, filter, selection**: Use `GET /api/gpx/files` and the summary data on each record (`enrichedTracksSummary`, `hasEnrichmentArtifact`). No full-artifact fetch.
+- **Charts (elevation, grade, curviness)**: Require per-track profile data. When `hasEnrichmentArtifact` is true, the client requests **`GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`** for the selected track. The API uses the index to read only that track’s slice from the artifact (Range request when supported). The response is one track’s JSON; the client parses it and merges into local state. If the request fails or parse fails, the UI shows “Elevation profile not available for this track” with bounded retry behavior.
 
 ---
 
@@ -73,7 +85,7 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 
 ## Chart / map interaction
 
-- **Three profiles** (elevation, curviness, grade) share a common **hover index** and **distance range** (zoom). Each chart reports hover by distance; the parent maps that to a profile-point index and passes it to the map.
+- **Three profiles** (elevation, curviness, grade) share a common **hover index** and **distance range** (zoom). They depend on **per-track detail** from the enrichment-artifact API; if that fetch has not succeeded, the panel shows “Loading profile…” or “Elevation profile not available for this track.”
 - **Map**: For the selected track, a marker or highlight moves to the lat/lng corresponding to the hovered profile index (using stored profile points or track geometry). Zoom on one chart (drag to select range) updates the shared range; the map can use the same range to highlight the segment (implementation may vary).
 - **Coordinates**: Always from GPX (profile points carry lat/lng from enrichment; track geometry is from GPX or enriched GeoJSON).
 
@@ -111,3 +123,12 @@ Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX f
 - Internal calculations (DEM, Turf, geodesic) use **meters**.
 - User-facing elevation and distance are converted to **feet** and **miles** in display and when returning data to the client (see `lib/units.ts` and `gpxRecordToDisplay` in `lib/gpx/files.ts`).
 - App Router only; dynamic route params are async in Next.js 16. Prefer server components; Tailwind for styling; strict TypeScript.
+
+---
+
+## Debugging enrichment and profiles
+
+- **Enrichment persistence**: After a job completes, the worker uploads the NDJSON artifact to `enrichment_artifacts` and updates the `gpx_files` record with `hasEnrichmentArtifact`, `enrichmentArtifactIndex`, and `enrichedTracksSummary`. Check PocketBase for the artifact record and that the file record has these fields. Worker logs: “Artifact persisted”, “Enrichment results saved.”
+- **Artifact slice API**: `GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N` requires the record to have `enrichmentArtifactIndex` and the artifact file to exist. The API uses Range requests when the backend supports them; see route logs for range vs full fetch. 4xx/5xx or missing index indicate wrong record state or missing migration.
+- **Client per-track loading**: MapView fetches the artifact slice only when `file.hasEnrichmentArtifact` is true. Ensure the file list is refetched after enrichment completes so the client receives `hasEnrichmentArtifact: true` (see `gpxRecordToDisplay` in `lib/gpx/files.ts`). In the browser Network tab, confirm a request to `.../enrichment-artifact?trackIndex=...` for the selected track, not only `.../file`.
+- **“Elevation profile not available for this track”**: Usually means (1) the file list never had `hasEnrichmentArtifact` (refetch or list API not including it), (2) the artifact request failed (check status and console), or (3) the slice response failed to parse. Check console for “[MapView] Per-track artifact fetch failed” or “parse failed”; failed loads are retried after a cooldown. Verify the same-origin API and auth (cookies) so the artifact route can read the artifact from PocketBase.

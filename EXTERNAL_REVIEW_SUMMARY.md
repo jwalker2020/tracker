@@ -1,6 +1,6 @@
 # External Review Summary: Recent Changes
 
-**Impact:** Enrichment now works with or without DEM (GPX-only mode when DEM is unset), GPX `<ele>` is used when present so DEM sampling is skipped where possible, and chart hover is simplified (vertical crosshair and floating label removed; tooltips kept). Async enrichment runs in a separate worker process; the web app only creates jobs and returns `jobId`. Documentation is aligned with the current worker-based architecture and reviewer needs.
+**Impact:** Enrichment uses an **artifact-backed storage model**: full detail lives in `enrichment_artifacts` (NDJSON); `gpx_files` holds summaries only. Sync and async enrichment both write artifacts (streamed to temp file, then to PocketBase); large sync jobs are rerouted to async. The client loads per-track profile data via `GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`; no full-artifact fetch. A regression where artifact-backed data did not show in the web app was fixed (file list now exposes `hasEnrichmentArtifact`). Enrichment works with or without DEM (GPX-only when unset); GPX `<ele>` is preferred when present. Async jobs run in a separate worker; the web app creates jobs and returns `jobId`. Documentation reflects the current architecture, read/write paths, and debugging.
 
 ---
 
@@ -24,8 +24,11 @@ On the elevation, curviness, and grade charts (ECharts), the **ECharts axis/cros
 **Performance**  
 GPX-only enrichment avoids DEM tile loading and raster sampling. For tracks that already have elevation, enrichment is faster when DEM is not configured; when DEM is configured, points with valid GPX elevation skip DEM sampling, reducing I/O and compute.
 
-**3. Enrichment architecture**  
-Async enrichment runs only in a **separate worker process** (`pnpm run enrichment-worker`). The web app creates or locates the job and returns `jobId`; the worker polls for claimable jobs and runs **runEnrichmentJob**. Progress and cancel state are **PocketBase-backed**; the web app does not run or resume enrichment.
+**3. Enrichment architecture (artifact-backed)**  
+- **Storage**: `gpx_files` stores lightweight summaries only (`enrichedTracksSummary`, `hasEnrichmentArtifact`, `enrichmentArtifactIndex`). Full per-track detail (including elevation profile JSON) is stored in **`enrichment_artifacts`** as NDJSON; the index holds byte offsets per track so the API can serve one track’s slice without loading the whole file.
+- **Write path**: Sync and async enrichment both use the same model. Enriched tracks are streamed to a temp file as NDJSON; the artifact is then streamed to PocketBase. Only after a successful artifact upload are `gpx_files` updated. Inline `enrichedTracksJson` is no longer the primary path (cleared when artifact is used). Large sync jobs are rerouted to async.
+- **Read path**: List, filter, and selection use summary data only. Detailed track/profile data is loaded **per track** via **`GET /api/gpx/files/[id]/enrichment-artifact?trackIndex=N`**. No full-artifact fetch. Charts depend on this slice; if the request or parse fails, the UI shows “Elevation profile not available for this track” with bounded retry.
+- **Worker**: Async jobs run only in a **separate worker process** (`pnpm run enrichment-worker`). Web creates or locates the job and returns `jobId`; worker polls and runs **runEnrichmentJob**. Progress and cancel state are **PocketBase-backed**.
 
 **4. Documentation**  
 `PROJECT_CONTEXT.md`, `CURRENT_STATE.md`, and this summary are kept in sync with the worker-based architecture, elevation source priority, and reviewer clarity (purpose, stack, modules, API, enrichment pipeline, progress/cancel, chart–map, filtering, auth, deployment, limitations).
@@ -41,10 +44,13 @@ Async enrichment runs only in a **separate worker process** (`pnpm run enrichmen
 
 | Area | Files |
 |------|--------|
+| Storage / artifact | `apps/web/src/lib/enrichment/runEnrichmentJob.ts`, `apps/web/src/lib/enrichment/artifact.ts`, `apps/web/src/lib/enrichment/artifact-stream.ts`, `apps/web/src/app/api/gpx/enrich/route.ts` |
+| Artifact read path | `apps/web/src/app/api/gpx/files/[id]/enrichment-artifact/route.ts` |
+| Client list + profile | `apps/web/src/lib/gpx/files.ts` (`gpxRecordToDisplay`: pass `hasEnrichmentArtifact`), `apps/web/src/components/maps/MapView.tsx` (per-track artifact fetch, profile panel message) |
 | DEM / GPX pipeline | `apps/web/src/lib/dem/enrich-elevation.ts`, `apps/web/src/lib/dem/gpx-extract.ts` |
 | Enrich API & worker | `apps/web/src/app/api/gpx/enrich/route.ts`, `apps/web/src/lib/enrichment/runEnrichmentJob.ts`, `apps/web/src/lib/enrichment/workerLoop.ts` |
 | Charts | `apps/web/src/components/gpx/TrackElevationProfile.tsx`, `TrackCurvinessProfile.tsx`, `TrackGradeProfile.tsx`, `TrackProfilePanel.tsx` |
-| Docs | `PROJECT_CONTEXT.md`, `CURRENT_STATE.md`, `EXTERNAL_REVIEW_SUMMARY.md` |
+| Docs | `PROJECT_CONTEXT.md`, `CURRENT_STATE.md`, `EXTERNAL_REVIEW_SUMMARY.md`, `KNOWN_ISSUES.md`, `docs/deployment.md` |
 
 ---
 
@@ -78,8 +84,8 @@ Validated scenarios (consistent with the implemented changes):
 
 ## Backward Compatibility
 
-- **enrichedTracksJson** is the primary per-track data shape; the pipeline writes it and the UI reads it. No schema change.
-- **elevationProfileJson** (legacy) is unchanged and still supported for display when present; the app prefers enrichedTracksJson when available.
+- **Artifact-backed enrichment is primary.** New and re-enriched runs write to `enrichment_artifacts` and set `hasEnrichmentArtifact` + `enrichmentArtifactIndex` + `enrichedTracksSummary` on `gpx_files`. The UI requests per-track slices from the artifact API. Inline `enrichedTracksJson` on `gpx_files` is cleared when artifact is used.
+- **File list** must include `hasEnrichmentArtifact` so the client can request artifact slices; `gpxRecordToDisplay` now passes it through. Old records without an artifact continue to use summary-only display (no profile charts unless they are re-enriched).
 
 ---
 
@@ -87,7 +93,9 @@ Validated scenarios (consistent with the implemented changes):
 
 - GPX elevation is assumed to be in **meters** (per GPX 1.1); no detection or conversion for feet.
 - **Worker-based enrichment**: Async jobs run only in the enrichment worker; the web app creates jobs and returns `jobId`. Progress and cancel are PocketBase-backed; partial file-level resume is not implemented.
-- Very large tracks can produce large **enrichedTracksJson**; PocketBase storage and response limits may still apply.
+- **Per-track artifact fetch** can fail independently (network, 4xx/5xx, parse). Client has bounded retry; UI shows “Elevation profile not available for this track.” If the file list never has `hasEnrichmentArtifact: true`, the client never requests the slice.
+- **Artifact upload**: PocketBase request/body limits apply to the artifact file. Very large enrichments may hit limits; no chunked multi-file artifact design yet.
+- **Client** parses the single-track artifact response as JSON text; no formal schema validation.
 - Progress and checkpoint writes are **best-effort**; failures are logged but do not stop enrichment.
 - **Guest auth**: `GUEST_USER_ID` is dev-only; not for production.
 
@@ -95,10 +103,9 @@ Validated scenarios (consistent with the implemented changes):
 
 ## Future Improvements
 
-- Deprecate or remove legacy **elevationProfileJson** once all consumers use **enrichedTracksJson**.
-- Consolidate dual enrichment paths (`lib/gpx/enrich.ts` vs `lib/dem/enrich-elevation.ts`) or document which flows use which.
 - Implement **partial resume** from checkpoint so the worker can resume from the last persisted checkpoint per track after a crash instead of restarting the full file.
-- Large-track handling: downsampling or capping profile points for storage to avoid PocketBase limits.
+- Large-track / artifact handling: downsampling or capping profile points to avoid PocketBase artifact upload limits if needed.
+- Optional **retry UX** for failed profile load (e.g. explicit “Retry” that clears cooldown and refetches the artifact slice).
 
 ---
 
@@ -106,3 +113,8 @@ Validated scenarios (consistent with the implemented changes):
 
 - **GPX lat/lon is authoritative** for geometry; DEM affects **only elevation**, not coordinates.
 - Elevation source order: GPX `<ele>` (when valid) → DEM (when configured and available) → missing.
+- **Artifact consistency**: `gpx_files` is updated with `hasEnrichmentArtifact` and index only after the artifact file is successfully uploaded, so list and slice API stay in sync.
+
+## Debugging
+
+See **PROJECT_CONTEXT.md** section “Debugging enrichment and profiles” for: enrichment persistence (worker logs, PocketBase state), artifact slice API (Range vs full fetch, 4xx/5xx), client per-track loading (`hasEnrichmentArtifact`, refetch after job complete), and “Elevation profile not available for this track” (missing flag, failed request, or parse failure).
