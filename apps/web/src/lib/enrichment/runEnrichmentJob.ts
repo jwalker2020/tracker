@@ -299,14 +299,26 @@ export async function runEnrichmentJob(
     } catch (e) {
       console.warn("[gpx/enrich] Checkpoint mark completed failed:", e);
     }
-    await writeProgress({
-      status: "completed",
-      currentPhase: "completed",
-      currentPhasePercent: 100,
-      overallPercentComplete: 100,
-      processedPoints: totalPoints,
-      totalPoints: totalPoints,
-    });
+    // Critical: mark job completed so the worker does not reclaim it. Do not use writeProgress (it swallows errors).
+    try {
+      await updateJobProgress(pb, jobId, {
+        status: "completed",
+        currentPhase: "completed",
+        currentPhasePercent: 100,
+        overallPercentComplete: 100,
+        processedPoints: totalPoints,
+        totalPoints: totalPoints,
+      }, checkpointRecordId);
+    } catch (e) {
+      demLog(`Failed to mark job completed (job will be reclaimed): ${e instanceof Error ? e.message : String(e)}`);
+      await writeProgress({ status: "failed", error: "Could not persist job completion." });
+      try {
+        await markCheckpointFailed(pb, recordId, jobId, "Could not persist job completion.", false);
+      } catch (e2) {
+        console.warn("[gpx/enrich] Mark checkpoint failed after completion write error:", e2);
+      }
+      throw e;
+    }
     demLog(
       `Cancellation checks: ${cancelChecksTotal} total, ${cancelFetchesActual} PocketBase fetches (throttled)`
     );
