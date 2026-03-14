@@ -488,6 +488,7 @@ function GpxOverlay({
   const trackLayersRef = useRef<TrackLayerRef[]>([]);
   const renderedFileIdsRef = useRef<Set<string>>(new Set());
   const visibleTrackKeysRef = useRef<Set<string> | null>(null);
+  const filesKey = files.map((f) => f.id).sort().join(",");
 
   useEffect(() => {
     if (!layersRef.current) {
@@ -501,10 +502,6 @@ function GpxOverlay({
       files.length > 0 &&
       prevIds.size < newFileIds.size &&
       [...prevIds].every((id) => newFileIds.has(id));
-    const onlyRemovingFiles =
-      files.length > 0 &&
-      newFileIds.size < prevIds.size &&
-      [...newFileIds].every((id) => prevIds.has(id));
 
     const onMapClick = () => setSelectedTrack(null);
     map.on("click", onMapClick);
@@ -517,35 +514,25 @@ function GpxOverlay({
       return () => map.off("click", onMapClick);
     }
 
+    // Always remove layers for files no longer in the list (e.g. user unchecked one).
+    const toRemove = trackLayersRef.current.filter((r) => !newFileIds.has(r.fileId));
+    for (const ref of toRemove) {
+      overlay.removeLayer(ref.poly);
+      overlay.removeLayer(ref.hitPoly);
+    }
+    trackLayersRef.current = trackLayersRef.current.filter((r) => newFileIds.has(r.fileId));
+    renderedFileIdsRef.current = new Set(
+      [...renderedFileIdsRef.current].filter((id) => newFileIds.has(id))
+    );
+
     const doFullRefresh = () => {
       overlay.clearLayers();
       trackLayersRef.current = [];
       renderedFileIdsRef.current = new Set();
     };
 
-    if (onlyRemovingFiles) {
-      for (const ref of trackLayersRef.current) {
-        if (!newFileIds.has(ref.fileId)) {
-          overlay.removeLayer(ref.poly);
-          overlay.removeLayer(ref.hitPoly);
-        }
-      }
-      trackLayersRef.current = trackLayersRef.current.filter((r) => newFileIds.has(r.fileId));
-      renderedFileIdsRef.current = new Set(newFileIds);
-      visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
-      return () => map.off("click", onMapClick);
-    }
-
     if (!onlyAddingFiles) {
       doFullRefresh();
-    } else {
-      for (const ref of trackLayersRef.current) {
-        if (!newFileIds.has(ref.fileId)) {
-          overlay.removeLayer(ref.poly);
-          overlay.removeLayer(ref.hitPoly);
-        }
-      }
-      trackLayersRef.current = trackLayersRef.current.filter((r) => newFileIds.has(r.fileId));
     }
 
     let cancelled = false;
@@ -594,7 +581,7 @@ function GpxOverlay({
       cancelled = true;
       map.off("click", onMapClick);
     };
-  }, [map, files, visibleTrackKeys, setSelectedTrack]);
+  }, [map, files, filesKey, visibleTrackKeys, setSelectedTrack]);
 
   useEffect(() => {
     for (const ref of trackLayersRef.current) {
