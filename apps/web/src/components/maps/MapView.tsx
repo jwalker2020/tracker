@@ -182,14 +182,6 @@ function FitToSelection({
         : { padding: L.point(padding, padding) }),
     };
     map.fitBounds(combined, fitOptions);
-    // After fitBounds finishes, zoom in one level to reduce aspect-ratio margin (deterministic: +1 to fit zoom, not cumulative).
-    map.once("moveend", () => {
-      const z = map.getZoom();
-      if (Number.isFinite(z)) {
-        const next = Math.min(maxZoom, z + 1);
-        if (next > z) map.setZoom(next);
-      }
-    });
   }, [map, fitToSelectionTrigger, bottomPaddingPx, maxZoom, visibleTrackKeys]);
   return null;
 }
