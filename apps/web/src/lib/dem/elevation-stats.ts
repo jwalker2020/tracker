@@ -39,35 +39,11 @@ export function smoothElevationSeries(
 }
 
 /**
- * Collect finite values in [start, end), optionally excluding 0 when the window has any non-zero
- * (so nodata zeros don't pull the curve down).
- */
-function windowValues(
-  elevations: ReadonlyArray<number>,
-  start: number,
-  end: number,
-  excludeZeroWhenOtherPresent: boolean
-): number[] {
-  const values: number[] = [];
-  let hasNonZero = false;
-  for (let j = start; j < end; j++) {
-    const v = elevations[j];
-    if (typeof v === "number" && Number.isFinite(v)) {
-      values.push(v);
-      if (v !== 0) hasNonZero = true;
-    }
-  }
-  if (excludeZeroWhenOtherPresent && hasNonZero) {
-    return values.filter((v) => v !== 0);
-  }
-  return values;
-}
-
-/**
  * Smooth an elevation series with a centered median filter.
  * Reduces single-point spikes/dips better than a moving average while preserving real terrain steps.
  * Uses a partial window at the ends. Zeros are excluded from the window when any other value in the
  * window is non-zero (so nodata zeros stored as 0 do not pull the profile down).
+ * Uses a single reusable scratch buffer to avoid O(n) small allocations.
  */
 export function smoothElevationSeriesMedian(
   elevations: ReadonlyArray<number>,
@@ -77,19 +53,39 @@ export function smoothElevationSeriesMedian(
   if (n === 0 || windowSize < 1) return [...elevations];
   const half = Math.floor(Math.max(1, windowSize) / 2);
   const out: number[] = [];
+  const scratch: number[] = new Array(windowSize);
   for (let i = 0; i < n; i++) {
     const start = Math.max(0, i - half);
     const end = Math.min(n, i + half + 1);
-    const values = windowValues(elevations, start, end, true);
-    if (values.length === 0) {
+    let scratchLen = 0;
+    let hasNonZero = false;
+    for (let j = start; j < end; j++) {
+      const v = elevations[j];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        scratch[scratchLen++] = v;
+        if (v !== 0) hasNonZero = true;
+      }
+    }
+    if (hasNonZero) {
+      let w = 0;
+      for (let r = 0; r < scratchLen; r++) {
+        if (scratch[r] !== 0) scratch[w++] = scratch[r]!;
+      }
+      scratchLen = w;
+    }
+    if (scratchLen === 0) {
       out.push(elevations[i] ?? 0);
       continue;
     }
-    values.sort((a, b) => a - b);
-    const mid = Math.floor(values.length / 2);
+    scratch.length = scratchLen;
+    scratch.sort((a, b) => a - b);
+    const mid = Math.floor(scratchLen / 2);
     const median =
-      values.length % 2 === 1 ? values[mid]! : (values[mid - 1]! + values[mid]!) / 2;
+      scratchLen % 2 === 1
+        ? scratch[mid]!
+        : (scratch[mid - 1]! + scratch[mid]!) / 2;
     out.push(median);
+    scratch.length = windowSize;
   }
   return out;
 }

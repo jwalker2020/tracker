@@ -1,8 +1,8 @@
 import along from "@turf/along";
 import length from "@turf/length";
 import { lineString } from "@turf/helpers";
-import type { DemTileIndex, ElevationStats } from "./types";
-import { findIntersectingTiles, boundsToWgs84Bbox } from "./intersect";
+import type { DemTileIndex, ElevationStats, Wgs84Bbox } from "./types";
+import { findIntersectingTiles, boundsToWgs84Bbox, tileBboxIntersectsTrackBbox } from "./intersect";
 import { loadTileIndex } from "./tile-index";
 import { DemRasterSampler } from "./sampler";
 import {
@@ -85,6 +85,18 @@ export type DemEnrichmentConfig = {
 /** Lightweight profile: cumulative distance (m), elevation (m), and map coords per point. */
 export type ElevationProfilePoint = { d: number; e: number; lat: number; lng: number };
 
+/** Optional per-track timing for instrumentation (not part of API output). */
+export type EnrichmentTiming = {
+  resampleMs: number;
+  resampleInputPoints: number;
+  resampleOutputPoints: number;
+  resampleSpacingM: number;
+  resampleSkipped: boolean;
+  smoothMs: number;
+  statsMs: number;
+  postSampleMs: number;
+};
+
 export type ElevationEnrichmentResult = {
   stats: ElevationStats;
   /** Total horizontal distance in meters (from Turf length). Internal; convert to feet for display. */
@@ -95,6 +107,8 @@ export type ElevationEnrichmentResult = {
   profile?: ElevationProfilePoint[];
   /** Set when validCount is 0 so API can return a specific reason. */
   elevationHint?: "no_intersecting_tiles" | "no_open_tiles" | "all_nodata";
+  /** Optional timing for instrumentation; not persisted to API. */
+  _timing?: EnrichmentTiming;
 };
 
 const YIELD_EVERY_N_POINTS = 200;
@@ -103,29 +117,136 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+export type ResampleResult = {
+  points: Array<[number, number]>;
+  inputPoints: number;
+  outputPoints: number;
+  spacingM: number;
+};
+
 /**
- * Resample line to points at fixed spacing (meters). Returns [lat, lng][].
- * If length is 0 or spacing is 0, returns the line's first and last point if distinct.
- * Optional onProgress(processed, estimatedTotal) is called periodically and yields to the event loop.
+ * Resample line to points at fixed spacing (meters). Uses cumulative segment distances
+ * and linear interpolation for O(segments + output) cost instead of O(output * segments) with Turf along().
+ * Returns points as [lat, lng][] and stats for instrumentation.
+ * Falls back to Turf along() when segment list is very small or distances are degenerate.
  */
 async function resampleLineToFixedSpacing(
   lineFeature: ReturnType<typeof lineString>,
   totalLengthM: number,
   spacingM: number,
   onProgress?: (processed: number, estimatedTotal: number) => void | Promise<void>
-): Promise<Array<[number, number]>> {
+): Promise<ResampleResult> {
   const coords = lineFeature.geometry.coordinates;
-  if (!coords || coords.length === 0) return [];
+  const inputPoints = coords?.length ?? 0;
+  if (!coords || coords.length === 0) {
+    return { points: [], inputPoints: 0, outputPoints: 0, spacingM: spacingM };
+  }
   if (coords.length === 1) {
     const [lng, lat] = coords[0]!;
-    return [[lat, lng]];
+    return { points: [[lat, lng]], inputPoints: 1, outputPoints: 1, spacingM: spacingM };
   }
 
   const safeSpacing = Number.isFinite(spacingM) && spacingM > 0 ? spacingM : RESAMPLE_SPACING_M;
   const safeLength = Number.isFinite(totalLengthM) && totalLengthM > 0 ? totalLengthM : 0;
   if (safeLength <= 0) {
     const [lng, lat] = coords[0]!;
-    return [[lat, lng]];
+    return { points: [[lat, lng]], inputPoints, outputPoints: 1, spacingM: safeSpacing };
+  }
+
+  const n = coords.length;
+  const cumDist: number[] = new Array(n);
+  cumDist[0] = 0;
+  for (let i = 1; i < n; i++) {
+    const seg = lineString([coords[i - 1]!, coords[i]!]);
+    const segLen = length(seg, { units: "meters" });
+    const add = Number.isFinite(segLen) && segLen >= 0 ? segLen : 0;
+    cumDist[i] = cumDist[i - 1]! + add;
+  }
+  const totalFromSegments = cumDist[n - 1]!;
+  if (totalFromSegments <= 0 && safeLength > 0) {
+    return resampleLineToFixedSpacingTurf(
+      lineFeature,
+      totalLengthM,
+      spacingM,
+      onProgress
+    );
+  }
+  const useLength = totalFromSegments > 0 ? totalFromSegments : safeLength;
+
+  const estimatedTotal = Math.max(1, Math.ceil(useLength / safeSpacing) + 1);
+  const out: Array<[number, number]> = [];
+  let segmentIndex = 0;
+
+  for (let d = 0; d <= useLength; d += safeSpacing) {
+    if (d >= useLength) {
+      const last = coords[n - 1]!;
+      out.push([last[1], last[0]]);
+      break;
+    }
+    while (segmentIndex < n - 1 && cumDist[segmentIndex + 1]! <= d) {
+      segmentIndex++;
+    }
+    if (segmentIndex >= n - 1) {
+      const last = coords[n - 1]!;
+      out.push([last[1], last[0]]);
+      break;
+    }
+    const d0 = cumDist[segmentIndex]!;
+    const d1 = cumDist[segmentIndex + 1]!;
+    const segLen = d1 - d0;
+    const t = segLen > 0 ? (d - d0) / segLen : 0;
+    const a = coords[segmentIndex]!;
+    const b = coords[segmentIndex + 1]!;
+    const lng = a[0] + t * (b[0] - a[0]);
+    const lat = a[1] + t * (b[1] - a[1]);
+    if (Number.isFinite(lng) && Number.isFinite(lat)) {
+      out.push([lat, lng]);
+    }
+    if (onProgress && out.length % YIELD_EVERY_N_POINTS === 0) {
+      await onProgress(out.length, estimatedTotal);
+      await yieldToEventLoop();
+    }
+  }
+
+  const last = coords[n - 1]!;
+  const lastLat = last[1];
+  const lastLng = last[0];
+  if (out.length > 0 && (out[out.length - 1]![0] !== lastLat || out[out.length - 1]![1] !== lastLng)) {
+    out.push([lastLat, lastLng]);
+  }
+  const points: Array<[number, number]> = out.length > 0 ? out : [[lastLat, lastLng]];
+  return {
+    points,
+    inputPoints,
+    outputPoints: points.length,
+    spacingM: safeSpacing,
+  };
+}
+
+/**
+ * Fallback: Turf along() per distance. Used when linear-interp path is not suitable (e.g. degenerate segments).
+ */
+async function resampleLineToFixedSpacingTurf(
+  lineFeature: ReturnType<typeof lineString>,
+  totalLengthM: number,
+  spacingM: number,
+  onProgress?: (processed: number, estimatedTotal: number) => void | Promise<void>
+): Promise<ResampleResult> {
+  const coords = lineFeature.geometry.coordinates;
+  const inputPoints = coords?.length ?? 0;
+  if (!coords || coords.length === 0) {
+    return { points: [], inputPoints: 0, outputPoints: 0, spacingM: spacingM };
+  }
+  if (coords.length === 1) {
+    const [lng, lat] = coords[0]!;
+    return { points: [[lat, lng]], inputPoints: 1, outputPoints: 1, spacingM: spacingM };
+  }
+
+  const safeSpacing = Number.isFinite(spacingM) && spacingM > 0 ? spacingM : RESAMPLE_SPACING_M;
+  const safeLength = Number.isFinite(totalLengthM) && totalLengthM > 0 ? totalLengthM : 0;
+  if (safeLength <= 0) {
+    const [lng, lat] = coords[0]!;
+    return { points: [[lat, lng]], inputPoints, outputPoints: 1, spacingM: safeSpacing };
   }
 
   const estimatedTotal = Math.max(1, Math.ceil(safeLength / safeSpacing) + 1);
@@ -147,7 +268,13 @@ async function resampleLineToFixedSpacing(
   if (out.length > 0 && (out[out.length - 1]![0] !== lastLat || out[out.length - 1]![1] !== lastLng)) {
     out.push([lastLat, lastLng]);
   }
-  return out.length > 0 ? out : [[lastLat, lastLng]];
+  const pointsTurf: Array<[number, number]> = out.length > 0 ? out : [[lastLat, lastLng]];
+  return {
+    points: pointsTurf,
+    inputPoints,
+    outputPoints: pointsTurf.length,
+    spacingM: safeSpacing,
+  };
 }
 
 /**
@@ -181,12 +308,16 @@ function safeDivide(num: number, denom: number): number {
   return Number.isFinite(q) ? q : 0;
 }
 
+type OpenTileT = NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>;
+
 type EnrichFromIndexOptions = {
   onProgress?: DemEnrichmentProgressCallback;
   resumeState?: EnrichmentResumeState;
   onCheckpoint?: (payload: EnrichmentCheckpointPayload) => void | Promise<void>;
   /** When set, use this sampler and do not close it (caller owns lifecycle). Enables tile cache reuse across tracks. */
   sharedSampler?: DemRasterSampler;
+  /** When set, use these open tiles and skip findIntersectingTiles + openTile loop (reduces per-track overhead after preload). */
+  preloadedOpenTiles?: OpenTileT[];
   /** Optional; when true, stop processing and exit cleanly. Sync or async. */
   isCancelled?: () => boolean | Promise<boolean>;
 };
@@ -329,50 +460,56 @@ export async function enrichSingleTrackFromIndex(
   const safeDistanceM = Number.isFinite(distanceM) && distanceM >= 0 ? distanceM : 0;
   const anyGpxEle = points.some(hasGpxElevation);
   const bbox = boundsToWgs84Bbox(bounds);
-  const tiles = findIntersectingTiles(index.tiles, bbox);
-
-  if (tiles.length === 0) {
-    if (!anyGpxEle) {
-      console.warn(
-        "[DEM] No tiles intersect GPX bbox [west,south,east,north]:",
-        bbox.map((n) => Number(n).toFixed(4)),
-        "| Index has",
-        index.tiles.length,
-        "tiles. Is the track inside your DEM coverage (e.g. New Hampshire)?"
-      );
-      const elevations: (number | null)[] = points.map(() => null);
-      const stats = computeElevationStatsWithDistance(elevations, safeDistanceM);
-      return { stats, distanceM: safeDistanceM, elevations, elevationHint: "no_intersecting_tiles" as const };
-    }
-  }
-
   const sampler = options?.sharedSampler ?? new DemRasterSampler(index.basePath);
-  const openTiles: NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>[] = [];
-  let tileOpenMs = 0;
-  if (tiles.length > 0) {
-    const t0 = Date.now();
-    for (const meta of tiles) {
-      const open = await sampler.openTile(meta);
-      if (open != null) openTiles.push(open);
+  let openTiles: OpenTileT[];
+  let findTilesMs: number;
+  let tileOpenMs: number;
+
+  if (options?.preloadedOpenTiles?.length) {
+    const findTilesStart = Date.now();
+    openTiles = options.preloadedOpenTiles.filter((open) =>
+      tileBboxIntersectsTrackBbox(open.meta.bbox, bbox)
+    );
+    findTilesMs = Date.now() - findTilesStart;
+    tileOpenMs = 0;
+  } else {
+    const findTilesStart = Date.now();
+    const tiles = findIntersectingTiles(index.tiles, bbox);
+    findTilesMs = Date.now() - findTilesStart;
+    if (tiles.length === 0) {
+      if (!anyGpxEle) {
+        console.warn(
+          "[DEM] No tiles intersect GPX bbox [west,south,east,north]:",
+          bbox.map((n) => Number(n).toFixed(4)),
+          "| Index has",
+          index.tiles.length,
+          "tiles. Is the track inside your DEM coverage (e.g. New Hampshire)?"
+        );
+        const elevations: (number | null)[] = points.map(() => null);
+        const stats = computeElevationStatsWithDistance(elevations, safeDistanceM);
+        return { stats, distanceM: safeDistanceM, elevations, elevationHint: "no_intersecting_tiles" as const };
+      }
     }
-    tileOpenMs = Date.now() - t0;
+    openTiles = [];
+    if (tiles.length > 0) {
+      const t0 = Date.now();
+      for (const meta of tiles) {
+        const open = await sampler.openTile(meta);
+        if (open != null) openTiles.push(open);
+      }
+      tileOpenMs = Date.now() - t0;
+    } else {
+      tileOpenMs = 0;
+    }
   }
 
   if (openTiles.length === 0 && !anyGpxEle) {
-    const pathMod = await import("node:path");
-    const firstPath = tiles[0]?.path ?? "(no tile)";
-    const resolvedFirst = pathMod.isAbsolute(firstPath)
-      ? firstPath
-      : pathMod.join(index.basePath, firstPath);
     console.warn(
-      "[DEM] No tile files could be opened for",
-      tiles.length,
-      "intersecting tile(s). DEM_BASE_PATH=",
+      "[DEM] No tile files could be opened for this track's bbox. DEM_BASE_PATH=",
       index.basePath || "(empty!)",
-      "| first tile path:",
-      firstPath,
-      "| resolved:",
-      resolvedFirst
+      "| index has",
+      index.tiles.length,
+      "tiles."
     );
     if (!options?.sharedSampler) sampler.closeAll();
     const elevations: (number | null)[] = points.map(() => null);
@@ -403,16 +540,47 @@ export async function enrichSingleTrackFromIndex(
   }
 
   /** Points to sample: raw (with optional ele) when GPX has elevation, else resampled. */
-  const pointsToSample: PointWithOptionalEle[] = useRawPoints
-    ? points
-    : safeDistanceM > 0 && points.length > 1
-      ? await resampleLineToFixedSpacing(line, safeDistanceM, RESAMPLE_SPACING_M, (processed, total) => {
-          if (onProgress) {
-            const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-            onProgress({ processedPoints: processed, totalPoints: total, percentComplete: pct });
-          }
-        })
-      : points;
+  const resampleStartMs = Date.now();
+  let pointsToSample: PointWithOptionalEle[];
+  let resampleMs: number;
+  let resampleInputPoints: number;
+  let resampleOutputPoints: number;
+  let resampleSpacingM: number;
+  let resampleSkipped: boolean;
+
+  if (useRawPoints) {
+    pointsToSample = points;
+    resampleMs = 0;
+    resampleInputPoints = points.length;
+    resampleOutputPoints = points.length;
+    resampleSpacingM = RESAMPLE_SPACING_M;
+    resampleSkipped = true;
+  } else if (safeDistanceM > 0 && points.length > 1) {
+    const resampleResult = await resampleLineToFixedSpacing(
+      line,
+      safeDistanceM,
+      RESAMPLE_SPACING_M,
+      (processed, total) => {
+        if (onProgress) {
+          const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+          onProgress({ processedPoints: processed, totalPoints: total, percentComplete: pct });
+        }
+      }
+    );
+    pointsToSample = resampleResult.points;
+    resampleMs = Date.now() - resampleStartMs;
+    resampleInputPoints = resampleResult.inputPoints;
+    resampleOutputPoints = resampleResult.outputPoints;
+    resampleSpacingM = resampleResult.spacingM;
+    resampleSkipped = false;
+  } else {
+    pointsToSample = points;
+    resampleMs = 0;
+    resampleInputPoints = points.length;
+    resampleOutputPoints = points.length;
+    resampleSpacingM = RESAMPLE_SPACING_M;
+    resampleSkipped = true;
+  }
 
   const totalPoints = pointsToSample.length;
   const cumulativeDistM = useRawPoints ? cumulativeDistancesAlongLine(pointsToSample) : null;
@@ -488,8 +656,8 @@ export async function enrichSingleTrackFromIndex(
   const progressInterval = Math.max(1, Math.floor(totalPoints / 100));
 
   const samplingStartMs = Date.now();
-  type OpenTileT = (NonNullable<Awaited<ReturnType<DemRasterSampler["openTile"]>>>);
-  let lastUsedTile: OpenTileT | null = null;
+  const readRasterCallsAtStart = sampler.getStats().readRasterCalls;
+  let fallbackCount = 0;
   let cancelled = false;
 
   try {
@@ -503,9 +671,49 @@ export async function enrichSingleTrackFromIndex(
       const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalPoints);
       const chunkLen = chunkEnd - chunkStart;
       const chunkElevations: (number | null)[] = new Array(chunkLen);
+      const pointsWithGpx = new Set<number>();
 
+      // Group points that need DEM by containing tile; fill GPX elevations.
+      const byTile = new Map<OpenTileT, { indices: number[]; lngs: number[]; lats: number[] }>();
+      let lastUsedTile: OpenTileT | null = null;
       for (let i = chunkStart; i < chunkEnd; i++) {
-        if ((i - chunkStart) % 500 === 0 && i > chunkStart) {
+        const pt = pointsToSample[i]!;
+        const lat = pt[0];
+        const lng = pt[1];
+        const rawEle = pt.length >= 3 ? pt[2] : undefined;
+        const hasValidEle =
+          typeof rawEle === "number" && Number.isFinite(rawEle);
+        const chunkIdx = i - chunkStart;
+        if (hasValidEle) {
+          chunkElevations[chunkIdx] = rawEle as number;
+          pointsWithGpx.add(chunkIdx);
+          continue;
+        }
+        const bboxLast: [number, number, number, number] =
+          lastUsedTile?.meta.bbox ?? [0, 0, 0, 0];
+        const [w, s, e, n] = bboxLast;
+        const inLast: boolean =
+          lastUsedTile != null && lng >= w && lng <= e && lat >= s && lat <= n;
+        const tile: OpenTileT | null = inLast
+          ? lastUsedTile
+          : findTileContainingPoint(openTiles, lng, lat);
+        if (tile) {
+          lastUsedTile = tile;
+          let entry = byTile.get(tile);
+          if (!entry) {
+            entry = { indices: [], lngs: [], lats: [] };
+            byTile.set(tile, entry);
+          }
+          entry.indices.push(chunkIdx);
+          entry.lngs.push(lng);
+          entry.lats.push(lat);
+        }
+      }
+
+      // Batch sample per tile (one readRasters per tile).
+      let tileIndex = 0;
+      for (const [tile, { indices, lngs, lats }] of byTile) {
+        if (tileIndex > 0 && tileIndex % 10 === 0) {
           const c = options?.isCancelled?.();
           const cancelledNow = await Promise.resolve(c);
           if (cancelledNow) {
@@ -513,55 +721,55 @@ export async function enrichSingleTrackFromIndex(
             break;
           }
         }
-        const pt = pointsToSample[i]!;
-        const lat = pt[0];
-        const lng = pt[1];
-        const rawEle = pt.length >= 3 ? pt[2] : undefined;
-        const hasValidEle =
-          typeof rawEle === "number" && Number.isFinite(rawEle);
-        let value: number | null = hasValidEle ? (rawEle as number) : null;
-        if (!hasValidEle) {
-          const bbox: [number, number, number, number] =
-            lastUsedTile?.meta.bbox ?? [0, 0, 0, 0];
-          const [w, s, e, n] = bbox;
-          const inLast: boolean =
-            lastUsedTile != null && lng >= w && lng <= e && lat >= s && lat <= n;
-          const tile: OpenTileT | null = inLast
-            ? lastUsedTile
-            : findTileContainingPoint(openTiles, lng, lat);
-          if (tile) {
-            const sample = await sampler.sample(tile, lng, lat);
-            if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
-              value = sample.elevationM;
-              lastUsedTile = tile;
-            }
+        tileIndex++;
+        const elevations = await sampler.samplePointsInTile(tile, lngs, lats);
+        for (let j = 0; j < indices.length; j++) {
+          const v = elevations[j];
+          if (v != null && isValidElevation(v)) {
+            chunkElevations[indices[j]!] = v;
           }
-          if (value == null) {
-            lastUsedTile = null;
-            for (const open of openTiles) {
-              const sample = await sampler.sample(open, lng, lat);
-              if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
-                value = sample.elevationM;
-                lastUsedTile = open;
-                break;
-              }
-            }
-          }
-        }
-        chunkElevations[i - chunkStart] = value;
-
-        const cumDist =
-          cumulativeDistM != null
-            ? Math.round((cumulativeDistM[i] ?? 0) * 10) / 10
-            : Math.round((i * segmentLength) * 10) / 10;
-        const e = value != null ? Math.round(value * 10) / 10 : 0;
-        profileSoFar.push({ d: cumDist, e, lat, lng });
-
-        const processed = i + 1;
-        if (processed % progressInterval === 0 || processed === totalPoints) {
-          reportProgress(processed);
         }
       }
+      if (cancelled) break;
+
+      if (!cancelled) {
+        // Fallback: points still null (tile boundary, nodata, or batch window skipped) — try other tiles one-by-one.
+        for (let chunkIdx = 0; chunkIdx < chunkLen; chunkIdx++) {
+          if (pointsWithGpx.has(chunkIdx) || chunkElevations[chunkIdx] != null) continue;
+          const pt = pointsToSample[chunkStart + chunkIdx]!;
+          const lng = pt[1];
+          const lat = pt[0];
+          for (const open of openTiles) {
+            const sample = await sampler.sample(open, lng, lat);
+            if (sample.elevationM != null && isValidElevation(sample.elevationM)) {
+              chunkElevations[chunkIdx] = sample.elevationM;
+              fallbackCount++;
+              break;
+            }
+          }
+        }
+
+        // Build profile and report progress (same order as before).
+        for (let i = chunkStart; i < chunkEnd; i++) {
+          const chunkIdx = i - chunkStart;
+          const value = chunkElevations[chunkIdx];
+          const pt = pointsToSample[i]!;
+          const lat = pt[0];
+          const lng = pt[1];
+          const cumDist =
+            cumulativeDistM != null
+              ? Math.round((cumulativeDistM[i] ?? 0) * 10) / 10
+              : Math.round((i * segmentLength) * 10) / 10;
+          const e = value != null ? Math.round(value * 10) / 10 : 0;
+          profileSoFar.push({ d: cumDist, e, lat, lng });
+
+          const processed = i + 1;
+          if (processed % progressInterval === 0 || processed === totalPoints) {
+            reportProgress(processed);
+          }
+        }
+      }
+
       if (cancelled) break;
 
       accumulatedState = mergeChunkElevationState(accumulatedState, chunkElevations);
@@ -593,26 +801,31 @@ export async function enrichSingleTrackFromIndex(
   }
 
   const samplingMs = Date.now() - samplingStartMs;
-  const elapsedSec = Math.floor((Date.now() - startTimeMs) / 1000);
-  demLog(
-    `Enrichment completed: ${totalPoints.toLocaleString()} points in ${formatHhMmSs(elapsedSec)} (tileOpen=${tileOpenMs}ms sampling=${samplingMs}ms)`
-  );
+  const readsThisTrack = sampler.getStats().readRasterCalls - readRasterCallsAtStart;
+  const resampleInfo = resampleSkipped
+    ? "resample=skipped"
+    : `resample=${resampleMs}ms in=${resampleInputPoints} out=${resampleOutputPoints} spacing=${resampleSpacingM}m`;
 
   if (!options?.sharedSampler) sampler.closeAll();
 
   // Use smoothed elevation series for stats and profile display to reduce DEM/GPS noise.
   // Raw profile is kept in profileSoFar for debugging; we derive smoothed profile and stats from it.
+  const postSampleStartMs = Date.now();
   const rawElevations = profileSoFar.map((p) => p.e);
+  const smoothStartMs = Date.now();
   const smoothedElevations =
     rawElevations.length > 0
       ? smoothElevationSeriesMedian(rawElevations, ELEVATION_SMOOTH_WINDOW_SIZE)
       : [];
+  const smoothMs = Date.now() - smoothStartMs;
+  const statsStartMs = Date.now();
   const statsFromSmoothed =
     smoothedElevations.length > 0
       ? computeElevationStatsWithDistance(smoothedElevations, safeDistanceM, {
           ascentDescentThresholdM: ELEVATION_CHANGE_THRESHOLD_M,
         })
       : null;
+  const statsMs = Date.now() - statsStartMs;
 
   const stats: ElevationStats = statsFromSmoothed
     ? {
@@ -635,6 +848,12 @@ export async function enrichSingleTrackFromIndex(
     smoothedElevations.length > 0 && smoothedElevations.length === profileSoFar.length
       ? profileSoFar.map((p, i) => ({ ...p, e: smoothedElevations[i]! }))
       : profileSoFar;
+  const postSampleMs = Date.now() - postSampleStartMs;
+
+  const elapsedSec = Math.floor((Date.now() - startTimeMs) / 1000);
+  demLog(
+    `Enrichment completed: ${totalPoints.toLocaleString()} points in ${formatHhMmSs(elapsedSec)} (findTiles=${findTilesMs}ms tileOpen=${tileOpenMs}ms ${resampleInfo} sampling=${samplingMs}ms smooth=${smoothMs}ms stats=${statsMs}ms reads=${readsThisTrack} fallbacks=${fallbackCount})`
+  );
 
   const hint =
     accumulatedState.validCount === 0
@@ -654,6 +873,16 @@ export async function enrichSingleTrackFromIndex(
     elevations: [],
     profile: profileForReturn.length > 0 ? profileForReturn : undefined,
     elevationHint: hint,
+    _timing: {
+      resampleMs,
+      resampleInputPoints,
+      resampleOutputPoints,
+      resampleSpacingM,
+      resampleSkipped,
+      smoothMs,
+      statsMs,
+      postSampleMs,
+    },
   };
 }
 
@@ -1034,6 +1263,8 @@ export async function enrichGpxWithDemPerTrack(
   }
 
   let completedPoints = 0;
+  let totalResampleMs = 0;
+  let totalPostSampleMs = 0;
   const enrichedTracks: EnrichedTrackSummary[] = [];
   const sharedSampler = new DemRasterSampler(index.basePath);
 
@@ -1044,6 +1275,35 @@ export async function enrichGpxWithDemPerTrack(
       console.warn("[DEM]", msg);
     }
   };
+
+  // Preload all tiles that intersect the full GPX bbox so no track pays first-touch open cost.
+  let unionWest = Infinity;
+  let unionSouth = Infinity;
+  let unionEast = -Infinity;
+  let unionNorth = -Infinity;
+  for (const t of tracks) {
+    if (t.bounds.west < unionWest) unionWest = t.bounds.west;
+    if (t.bounds.south < unionSouth) unionSouth = t.bounds.south;
+    if (t.bounds.east > unionEast) unionEast = t.bounds.east;
+    if (t.bounds.north > unionNorth) unionNorth = t.bounds.north;
+  }
+  const unionBbox: Wgs84Bbox =
+    unionWest <= unionEast && unionSouth <= unionNorth
+      ? [unionWest, unionSouth, unionEast, unionNorth]
+      : [0, 0, 0, 0];
+  const preloadTiles = findIntersectingTiles(index.tiles, unionBbox);
+  const preloadStartMs = Date.now();
+  const preloadedOpenTiles: OpenTileT[] = [];
+  for (const meta of preloadTiles) {
+    const open = await sharedSampler.openTile(meta);
+    if (open != null) preloadedOpenTiles.push(open);
+  }
+  const preloadMs = Date.now() - preloadStartMs;
+  if (preloadTiles.length > 0) {
+    demLog(
+      `Preloaded ${preloadedOpenTiles.length}/${preloadTiles.length} DEM tiles for job bbox in ${preloadMs}ms`
+    );
+  }
 
   try {
     for (let i = 0; i < tracks.length; i++) {
@@ -1073,12 +1333,23 @@ export async function enrichGpxWithDemPerTrack(
       const result = await enrichSingleTrackFromIndex(track.points, track.bounds, index, {
         onProgress,
         sharedSampler,
+        preloadedOpenTiles: preloadedOpenTiles.length > 0 ? preloadedOpenTiles : undefined,
         isCancelled: config.isCancelled,
       });
+      if (result._timing) {
+        totalResampleMs += result._timing.resampleMs;
+        totalPostSampleMs += result._timing.postSampleMs;
+      }
       enrichedTracks.push(toEnrichedTrackSummary(track, result));
       completedPoints += result.stats.totalCount;
     }
   } finally {
+    const stats = sharedSampler.getStats();
+    demLog(
+      `Job DEM stats: tileOpen hits=${stats.openTileHits} misses=${stats.openTileMisses} ` +
+        `readRasterCalls=${stats.readRasterCalls} oversizedSplits=${stats.oversizedBatchSplits} subBatchReads=${stats.subBatchReads} ` +
+        `totalResampleMs=${totalResampleMs} totalPostSampleMs=${totalPostSampleMs}`
+    );
     sharedSampler.closeAll();
   }
 

@@ -17,6 +17,8 @@ import {
 
 const COLLECTION = "gpx_files";
 const PROGRESS_WRITE_THROTTLE_MS = 1_500;
+/** Throttle cancellation checks so PocketBase is queried at most this often. */
+const CANCEL_CACHE_MS = 1_500;
 
 const WEIGHT_SETUP = 5;
 const WEIGHT_PARSING = 5;
@@ -58,6 +60,10 @@ export async function runEnrichmentJob(
   const baseUrl = process.env.NEXT_PUBLIC_PB_URL ?? "";
   let enhancementStartMs: number | undefined;
   let lastProgressWrite = 0;
+  let cancelChecksTotal = 0;
+  let cancelFetchesActual = 0;
+  let lastCancelCheckMs = 0;
+  let cachedCancelled: boolean | null = null;
 
   const writeProgress = async (update: Parameters<typeof updateJobProgress>[2]) => {
     try {
@@ -70,8 +76,16 @@ export async function runEnrichmentJob(
   };
 
   const isCancelled = async (): Promise<boolean> => {
+    cancelChecksTotal++;
+    const now = Date.now();
+    if (cachedCancelled !== null && now - lastCancelCheckMs < CANCEL_CACHE_MS) {
+      return cachedCancelled;
+    }
+    lastCancelCheckMs = now;
+    cancelFetchesActual++;
     const cp = await getCheckpointByRecordId(pb, recordId);
-    return cp?.status === "cancelled";
+    cachedCancelled = cp?.status === "cancelled" ?? false;
+    return cachedCancelled;
   };
 
   try {
@@ -248,6 +262,9 @@ export async function runEnrichmentJob(
       processedPoints: totalPoints,
       totalPoints: totalPoints,
     });
+    demLog(
+      `Cancellation checks: ${cancelChecksTotal} total, ${cancelFetchesActual} PocketBase fetches (throttled)`
+    );
     demLog("Enrichment results saved. Job completed.");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
