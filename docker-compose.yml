@@ -1,6 +1,6 @@
 # Production Docker stack: web (public), worker, pocketbase (internal + LAN-only admin), dem-tools.
+# Tuned for host with 32GB RAM + 4GB swap. Memory limits prevent any one service from starving others.
 # Externally reachable: web only (port 3000). Cloudflare Tunnel: point https://tracker.nhwalker.net -> web only.
-# PocketBase: 8090 bound to host LAN IP only (admin UI); internal network for web/worker. Worker has no host ports.
 
 services:
   web:
@@ -10,6 +10,8 @@ services:
     image: tracker-web:latest
     ports:
       - "3000:3000"
+    mem_limit: 2g
+    memswap_limit: 2g
     environment:
       # Internal-only: Docker hostname for same-stack communication. Never use a public URL here.
       NEXT_PUBLIC_PB_URL: http://pocketbase:8090
@@ -33,6 +35,8 @@ services:
 
   worker:
     image: tracker-web:latest
+    mem_limit: 6g
+    memswap_limit: 8g
     environment:
       # Worker gets env from container only (no .env.local). Same internal PB URL as web.
       NEXT_PUBLIC_PB_URL: http://pocketbase:8090
@@ -55,6 +59,8 @@ services:
       context: ./apps/pb
       dockerfile: Dockerfile
     image: tracker-pocketbase:latest
+    mem_limit: 1g
+    memswap_limit: 1g
     volumes:
       - pb_data:/app/pb_data
     # LAN-only: bind 8090 to the host's LAN IP. Set POCKETBASE_LAN_IP to your server's LAN IP (e.g. in Coolify env); default 127.0.0.1 = localhost only.
@@ -75,6 +81,8 @@ services:
       context: ./tools/dem
       dockerfile: Dockerfile
     image: tracker-dem-tools:latest
+    mem_limit: 4g
+    memswap_limit: 6g
     # Internal-only maintenance container for DEM generation. No ports; not public.
     volumes:
       - dem_raw:/workspace/raw

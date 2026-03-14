@@ -12,9 +12,11 @@ COPY apps/web/package.json apps/web/package.json
 RUN pnpm install
 
 # Build Next.js app. NEXT_PUBLIC_* are inlined at build time, so set them here.
+# Allow larger Node heap during build (target host 32GB RAM) to avoid OOM.
 FROM base AS builder
 ARG NEXT_PUBLIC_PB_URL=http://pocketbase:8090
 ENV NEXT_PUBLIC_PB_URL=$NEXT_PUBLIC_PB_URL
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 WORKDIR /app
 COPY --from=deps /app/node_modules /app/node_modules
 COPY --from=deps /app/apps/web/node_modules /app/apps/web/node_modules
@@ -23,10 +25,12 @@ RUN pnpm --filter web build
 
 # Production image: run web (next start) or worker (node + tsx).
 # Keep workspace layout so pnpm symlinks in apps/web/node_modules resolve.
+# Allow Node heap headroom for DEM worker (GeoTIFF buffers, batches) on 32GB host.
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS="--max-old-space-size=3072"
 
 COPY --from=builder /app/node_modules /app/node_modules
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml /app/
