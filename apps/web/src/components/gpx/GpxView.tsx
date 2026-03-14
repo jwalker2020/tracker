@@ -309,6 +309,7 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
                 delete next[recordId];
                 return next;
               });
+              refetch();
             }}
           />
         </section>
