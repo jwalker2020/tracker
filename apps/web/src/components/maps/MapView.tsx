@@ -196,7 +196,9 @@ function FitToSelection({
         : { padding: L.point(padding, padding) }),
     };
     map.fitBounds(boundsToFit, fitOptions);
-  }, [map, fitToSelectionTrigger, bottomPaddingPx, maxZoom, visibleTrackKeys]);
+    // Only run on explicit "Zoom to selection" (fitToSelectionTrigger), not when visibleTrackKeys
+    // changes (e.g. grade/curviness filter slider), so moving sliders doesn't zoom the map.
+  }, [map, fitToSelectionTrigger, bottomPaddingPx, maxZoom]);
   return null;
 }
 
