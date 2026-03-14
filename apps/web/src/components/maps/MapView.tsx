@@ -183,11 +183,6 @@ function FitToSelection({
         : { padding: L.point(padding, padding) }),
     };
     map.fitBounds(combined, fitOptions);
-    // Zoom in one level so the selection fills the viewport more tightly (reduces aspect-ratio margin).
-    const nextZoom = Math.min(maxZoom, map.getZoom() + 1);
-    if (nextZoom > map.getZoom()) {
-      map.setZoom(nextZoom);
-    }
   }, [map, fitToSelectionTrigger, bottomPaddingPx, maxZoom, visibleTrackKeys]);
   return null;
 }
