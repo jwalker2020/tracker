@@ -35,6 +35,8 @@ services:
 
   worker:
     image: tracker-web:latest
+    deploy:
+      replicas: 1
     mem_limit: 6g
     memswap_limit: 8g
     environment:
