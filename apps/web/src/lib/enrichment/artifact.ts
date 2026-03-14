@@ -4,6 +4,7 @@
  */
 
 import fs from "fs";
+import { PassThrough } from "stream";
 import type PocketBase from "pocketbase";
 import FormData from "form-data";
 
@@ -126,7 +127,7 @@ export async function saveEnrichmentArtifactFromPath(
     const baseHeaders = form.getHeaders() as Record<string, string>;
     if (authToken) baseHeaders["Authorization"] = `Bearer ${authToken}`;
 
-    const headersWithLength = await new Promise<Record<string, string>>((resolve, reject) => {
+    const headersWithLength = await new Promise<Record<string, string>>((resolve) => {
       form.getLength((err, length) => {
         if (err) {
           resolve(baseHeaders);
@@ -140,25 +141,33 @@ export async function saveEnrichmentArtifactFromPath(
       });
     });
 
+    // Node 18 fetch + form-data stream are incompatible; pipe through PassThrough so undici accepts the body.
+    const bodyStream = new PassThrough();
+    form.pipe(bodyStream);
+
     let res: Response;
     try {
       res = await fetch(url, {
         method,
-        body: form as unknown as BodyInit,
+        body: bodyStream as unknown as BodyInit,
         headers: headersWithLength as HeadersInit,
         duplex: "half",
       } as RequestInit);
     } catch (networkErr) {
-      const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
+      const err = networkErr as NodeJS.ErrnoException;
+      const msg = err instanceof Error ? err.message : String(networkErr);
       console.warn("[enrichment-artifact] upload failed (network)", {
         recordId,
-        statusCode: undefined,
         error: msg,
+        code: err?.code,
+        errno: err?.errno,
+        cause: err?.cause != null ? String(err.cause) : undefined,
+        url: url.slice(0, 80),
         fileSize,
         uploadMs: Date.now() - uploadStartMs,
         mode: isUpdate ? "update" : "create",
       });
-      throw new ArtifactUploadError(`Artifact upload network error: ${msg}`, undefined, undefined);
+      throw new ArtifactUploadError(`Artifact upload network error: ${msg}${err?.code ? ` (${err.code})` : ""}`, undefined, undefined);
     }
 
     const bodyText = await res.text();
@@ -254,9 +263,11 @@ export async function saveEnrichmentArtifactFromPath(
               else resolve({ ...headers2, "Content-Length": String(length) });
             });
           });
+          const bodyStream2 = new PassThrough();
+          form2.pipe(bodyStream2);
           const res = await fetch(`${recordsUrl}/${retryItem.id}`, {
             method: "PATCH",
-            body: form2 as unknown as BodyInit,
+            body: bodyStream2 as unknown as BodyInit,
             headers: headers2WithLength as HeadersInit,
             duplex: "half",
           } as RequestInit);
