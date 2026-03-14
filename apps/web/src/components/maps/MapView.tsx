@@ -486,6 +486,8 @@ function GpxOverlay({
   const map = useMap();
   const layersRef = useRef<ReturnType<typeof import("leaflet").layerGroup> | null>(null);
   const trackLayersRef = useRef<TrackLayerRef[]>([]);
+  const renderedFileIdsRef = useRef<Set<string>>(new Set());
+  const visibleTrackKeysRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     if (!layersRef.current) {
@@ -493,19 +495,47 @@ function GpxOverlay({
       layersRef.current = overlay;
     }
     const overlay = layersRef.current;
-    overlay.clearLayers();
-    trackLayersRef.current = [];
+    const newFileIds = new Set(files.map((f) => f.id));
+    const prevIds = renderedFileIdsRef.current;
+    const onlyAddingFiles =
+      files.length > 0 &&
+      prevIds.size < newFileIds.size &&
+      [...prevIds].every((id) => newFileIds.has(id));
 
     const onMapClick = () => setSelectedTrack(null);
     map.on("click", onMapClick);
 
     if (files.length === 0) {
+      overlay.clearLayers();
+      trackLayersRef.current = [];
+      renderedFileIdsRef.current = new Set();
+      visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
       return () => map.off("click", onMapClick);
     }
 
+    const doFullRefresh = () => {
+      overlay.clearLayers();
+      trackLayersRef.current = [];
+      renderedFileIdsRef.current = new Set();
+    };
+
+    if (!onlyAddingFiles) {
+      doFullRefresh();
+    } else {
+      for (const ref of trackLayersRef.current) {
+        if (!newFileIds.has(ref.fileId)) {
+          overlay.removeLayer(ref.poly);
+          overlay.removeLayer(ref.hitPoly);
+        }
+      }
+      trackLayersRef.current = trackLayersRef.current.filter((r) => newFileIds.has(r.fileId));
+    }
+
     let cancelled = false;
+    const filesToFetch = onlyAddingFiles ? files.filter((f) => !prevIds.has(f.id)) : files;
+
     (async () => {
-      for (const rec of files) {
+      for (const rec of filesToFetch) {
         if (cancelled || !overlay) return;
         const color = rec.color || "#3b82f6";
         const { tracks } = await getDisplayGeometry(rec);
@@ -536,7 +566,12 @@ function GpxOverlay({
             name: track.name,
           });
         });
+        renderedFileIdsRef.current.add(rec.id);
       }
+      if (!onlyAddingFiles) {
+        renderedFileIdsRef.current = new Set(files.map((f) => f.id));
+      }
+      visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
     })();
     return () => {
       cancelled = true;
