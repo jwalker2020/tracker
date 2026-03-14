@@ -116,6 +116,7 @@ function FitToSelection({
     const visible = visibleTrackKeysRef.current;
     if (currentFiles.length === 0) return;
     const boundsList: L.LatLngBounds[] = [];
+    let usedVisibleTracks = false;
     // Prefer bounds of visible tracks only so large files zoom to what's on screen, not the whole file.
     if (visible != null && visible.size > 0) {
       for (const f of currentFiles) {
@@ -138,6 +139,7 @@ function FitToSelection({
             typeof b.east === "number"
           ) {
             boundsList.push(L.latLngBounds([b.south, b.west], [b.north, b.east]));
+            usedVisibleTracks = true;
           }
         }
       }
@@ -154,6 +156,21 @@ function FitToSelection({
     for (let i = 1; i < boundsList.length; i++) {
       combined.extend(boundsList[i]!);
     }
+    const sw = combined.getSouthWest();
+    const ne = combined.getNorthEast();
+    const container = map.getContainer();
+    const rect = container?.getBoundingClientRect?.();
+    console.info("[FitToSelection] zoom-to-selection", {
+      path: usedVisibleTracks ? "visible-tracks" : "file-bounds",
+      visibleSize: visible?.size ?? null,
+      filesCount: currentFiles.length,
+      boundsCount: boundsList.length,
+      combined: { south: sw.lat, west: sw.lng, north: ne.lat, east: ne.lng },
+      padding: 12,
+      bottomPaddingPx,
+      maxZoom,
+      mapSize: rect ? `${Math.round(rect.width)}x${Math.round(rect.height)}` : null,
+    });
     // Small padding so selection fills the map tightly.
     const padding = 12;
     const fitOptions: L.FitBoundsOptions = {
