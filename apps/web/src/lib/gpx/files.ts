@@ -146,6 +146,7 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
     ...(maxElevationM != null && { maxElevationFt: metersToFeet(maxElevationM) }),
     ...(totalAscentM != null && { totalAscentFt: metersToFeet(totalAscentM) }),
     ...(totalDescentM != null && { totalDescentFt: metersToFeet(totalDescentM) }),
+    ...(hasEnrichmentArtifact === true && { hasEnrichmentArtifact: true }),
   };
 
   if (hasEnrichmentArtifact && enrichedTracksSummary) {
