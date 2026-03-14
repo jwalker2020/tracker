@@ -1,6 +1,6 @@
-# Production Docker stack: web (public), worker, pocketbase (internal + LAN-only admin), dem-tools.
-# Tuned for host with 32GB RAM + 4GB swap. Memory limits prevent any one service from starving others.
+# Production Docker stack: web (public), worker, pocketbase (internal + LAN/WireGuard admin), dem-tools.
 # Externally reachable: web only (port 3000). Cloudflare Tunnel: point https://tracker.nhwalker.net -> web only.
+# Memory limits are set so one service, especially the DEM worker, cannot starve the host.
 
 services:
   web:
@@ -13,7 +13,6 @@ services:
     mem_limit: 2g
     memswap_limit: 2g
     environment:
-      # Internal-only: Docker hostname for same-stack communication. Never use a public URL here.
       NEXT_PUBLIC_PB_URL: http://pocketbase:8090
       DEM_BASE_PATH: /data/dem
       DEM_MANIFEST_PATH: manifest.json
@@ -35,15 +34,15 @@ services:
 
   worker:
     image: tracker-web:latest
-    deploy:
-      replicas: 1
-    mem_limit: 6g
-    memswap_limit: 8g
+    # Keep the worker bounded so DEM jobs cannot exhaust host RAM.
+    # Node heap is capped below the container memory limit so failures stay contained.
+    mem_limit: 4g
+    memswap_limit: 4g
     environment:
-      # Worker gets env from container only (no .env.local). Same internal PB URL as web.
       NEXT_PUBLIC_PB_URL: http://pocketbase:8090
       DEM_BASE_PATH: /data/dem
       DEM_MANIFEST_PATH: manifest.json
+      NODE_OPTIONS: "--max-old-space-size=3072"
       # ENRICHMENT_WORKER_POLL_INTERVAL_MS: 5000
     volumes:
       - dem_output:/data/dem:ro
@@ -52,7 +51,7 @@ services:
         condition: service_healthy
     command: ["node", "--import", "tsx", "scripts/enrichment-worker.ts"]
     restart: unless-stopped
-    # No ports. No healthcheck (no HTTP server). Run a single replica.
+    # No ports. No healthcheck (no HTTP server). Run a single worker process.
     networks:
       - tracker
 
@@ -65,7 +64,8 @@ services:
     memswap_limit: 1g
     volumes:
       - pb_data:/app/pb_data
-    # LAN-only: bind 8090 to the host's LAN IP. Set POCKETBASE_LAN_IP to your server's LAN IP (e.g. in Coolify env); default 127.0.0.1 = localhost only.
+    # Exposes PocketBase admin/API on the host.
+    # Restrict access with host firewall rules to LAN + WireGuard only.
     ports:
       - "8090:8090"
     restart: unless-stopped
@@ -84,13 +84,12 @@ services:
       dockerfile: Dockerfile
     image: tracker-dem-tools:latest
     mem_limit: 4g
-    memswap_limit: 6g
+    memswap_limit: 4g
     # Internal-only maintenance container for DEM generation. No ports; not public.
     volumes:
       - dem_raw:/workspace/raw
       - dem_output:/workspace/output
-    # Override the image entrypoint so the container idles and is reachable via shell.
-    # DEM tooling is run manually inside the container (see docs) via /docker-entry.sh.
+    # Idle container so DEM commands can be run from the Coolify terminal.
     entrypoint: ["/bin/sh", "-lc"]
     command: ["sleep infinity"]
     restart: unless-stopped
