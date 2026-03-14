@@ -2,8 +2,8 @@ import "./globals.css";
 import type { ReactNode } from "react";
 
 export const metadata = {
-  title: "Full-Stack Cursor Starter",
-  description: "Next.js + PocketBase starter",
+  title: "Tracker - NH Snowmobile trails",
+  description: "NH Snowmobile trail tracker with GPX and elevation",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
