@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 
 type InfoTooltipProps = {
   text: string;
+  /** When true, align tooltip left edge with icon so it extends right (avoids clipping in narrow sidebars). */
+  alignLeft?: boolean;
 };
 
 function InfoIcon({ className }: { className?: string }) {
@@ -23,7 +25,7 @@ function InfoIcon({ className }: { className?: string }) {
   );
 }
 
-export function InfoTooltip({ text }: InfoTooltipProps) {
+export function InfoTooltip({ text, alignLeft }: InfoTooltipProps) {
   const [visible, setVisible] = useState(false);
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const tooltipRef = useRef<HTMLSpanElement>(null);
@@ -47,12 +49,12 @@ export function InfoTooltip({ text }: InfoTooltipProps) {
     const rect = wrapper.getBoundingClientRect();
     setTooltipStyle({
       position: "fixed",
-      left: rect.left + rect.width / 2,
+      left: alignLeft ? rect.left : rect.left + rect.width / 2,
       top: rect.top,
-      transform: "translate(-50%, -100%) translateY(-4px)",
+      transform: alignLeft ? "translate(0, -100%) translateY(-4px)" : "translate(-50%, -100%) translateY(-4px)",
       zIndex: 9999,
     });
-  }, [visible]);
+  }, [visible, alignLeft]);
 
   const tooltipContent = visible ? (
     <span
