@@ -507,12 +507,21 @@ function GpxOverlay({
     const onMapClick = () => setSelectedTrack(null);
     map.on("click", onMapClick);
 
-    // When same file set and we already have layers, skip so we don't clear or re-run async
-    // (avoids cancelling the in-flight async and then skipping, which would leave no layers).
+    const visibleTrackKeysUnchanged =
+      visibleTrackKeysRef.current === visibleTrackKeys ||
+      (visibleTrackKeysRef.current == null && visibleTrackKeys == null) ||
+      (visibleTrackKeysRef.current != null &&
+        visibleTrackKeys != null &&
+        visibleTrackKeysRef.current.size === visibleTrackKeys.size &&
+        [...visibleTrackKeysRef.current].every((k) => visibleTrackKeys.has(k)));
+
+    // When same file set, same filter, and we already have layers, skip so we don't clear or re-run async.
+    // If visibleTrackKeys changed (e.g. filter slider), we must not skip so sameFileSet path can re-apply filter.
     if (
       files.length > 0 &&
       filesKey === lastProcessedFilesKeyRef.current &&
-      trackLayersRef.current.length > 0
+      trackLayersRef.current.length > 0 &&
+      visibleTrackKeysUnchanged
     ) {
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] filesKey unchanged + has layers → skip");
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
@@ -632,28 +641,18 @@ function GpxOverlay({
       };
     }
 
-    // When same set of files (e.g. effect re-ran due to visibleTrackKeys): do not clear
-    // or we would wipe the map and rely on async to repaint; a later run can cancel that async.
-    if (sameFileSet) {
-      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: sameFileSet → return (no clear)");
-      lastProcessedFilesKeyRef.current = filesKey;
-      visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
-      return () => {
-        if (deferredClearIdRef.current != null) {
-          clearTimeout(deferredClearIdRef.current);
-          deferredClearIdRef.current = null;
-        }
-        map.off("click", onMapClick);
-      };
-    }
-
     const doFullRefresh = () => {
       overlay.clearLayers();
       trackLayersRef.current = [];
       renderedFileIdsRef.current = new Set();
     };
 
-    if (!onlyAddingFiles) {
+    // When same set of files but effect re-ran (e.g. visibleTrackKeys changed from filter): re-apply
+    // filter by doing a full refresh and re-fetch so layers match the new filter.
+    if (sameFileSet) {
+      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: sameFileSet → fullRefresh to re-apply filter");
+      doFullRefresh();
+    } else if (!onlyAddingFiles) {
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: fullRefresh → clear + async");
       doFullRefresh();
     } else {
