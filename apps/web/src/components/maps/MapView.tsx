@@ -491,7 +491,7 @@ function GpxOverlay({
   const lastProcessedFilesKeyRef = useRef<string>("");
   const deferredClearIdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentFilesKeyRef = useRef<string>("");
-  const filesKey = files.map((f) => f.id).sort().join(",");
+  const filesKey = files.map((f) => f.id).join(",");
   const DEBUG_GPX_OVERLAY = true; // set to false to disable [GpxOverlay] console logs
 
   useEffect(() => {
