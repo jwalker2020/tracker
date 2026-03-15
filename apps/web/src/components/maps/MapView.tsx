@@ -490,10 +490,13 @@ function GpxOverlay({
   const visibleTrackKeysRef = useRef<Set<string> | null>(null);
   const lastProcessedFilesKeyRef = useRef<string>("");
   const deferredClearIdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentFilesKeyRef = useRef<string>("");
   const filesKey = files.map((f) => f.id).sort().join(",");
   const DEBUG_GPX_OVERLAY = true; // set to false to disable [GpxOverlay] console logs
 
   useEffect(() => {
+    currentFilesKeyRef.current = filesKey;
+
     if (!layersRef.current) {
       const overlay = L.layerGroup().addTo(map);
       layersRef.current = overlay;
@@ -563,6 +566,7 @@ function GpxOverlay({
         const DEFER_MS = 200;
         const id = setTimeout(() => {
           deferredClearIdRef.current = null;
+          if (currentFilesKeyRef.current !== "") return;
           if (!layersRef.current) return;
           const o = layersRef.current;
           o.clearLayers();
