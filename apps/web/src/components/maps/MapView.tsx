@@ -502,7 +502,6 @@ function GpxOverlay({
       layersRef.current = overlay;
     }
     const overlay = layersRef.current;
-    const newFileIds = new Set(files.map((f) => f.id));
 
     const onMapClick = () => setSelectedTrack(null);
     map.on("click", onMapClick);
@@ -534,29 +533,11 @@ function GpxOverlay({
       };
     }
 
-    const prevIds = renderedFileIdsRef.current;
-    const onlyAddingFiles =
-      files.length > 0 &&
-      prevIds.size < newFileIds.size &&
-      [...prevIds].every((id) => newFileIds.has(id));
-    const onlyRemovingFiles =
-      files.length > 0 &&
-      newFileIds.size < prevIds.size &&
-      [...newFileIds].every((id) => prevIds.has(id));
-    const sameFileSet =
-      newFileIds.size === prevIds.size &&
-      [...newFileIds].every((id) => prevIds.has(id));
-
     if (DEBUG_GPX_OVERLAY) {
       console.log("[GpxOverlay] effect run", {
         filesCount: files.length,
         fileIds: files.map((f) => f.id),
         filesKey,
-        prevIds: [...prevIds],
-        newFileIds: [...newFileIds],
-        onlyAddingFiles,
-        onlyRemovingFiles,
-        sameFileSet,
         trackLayersCount: trackLayersRef.current.length,
       });
     }
@@ -612,55 +593,17 @@ function GpxOverlay({
       deferredClearIdRef.current = null;
     }
 
-    // Remove layers for files no longer in the list (e.g. user unchecked one).
-    const toRemove = trackLayersRef.current.filter((r) => !newFileIds.has(r.fileId));
-    if (DEBUG_GPX_OVERLAY && toRemove.length > 0) {
-      const removedIds = [...new Set(toRemove.map((r) => r.fileId))];
-      console.log("[GpxOverlay] removeLayers", { count: toRemove.length, fileIds: removedIds });
-    }
-    for (const ref of toRemove) {
-      overlay.removeLayer(ref.poly);
-      overlay.removeLayer(ref.hitPoly);
-    }
-    trackLayersRef.current = trackLayersRef.current.filter((r) => newFileIds.has(r.fileId));
-    renderedFileIdsRef.current = new Set(
-      [...renderedFileIdsRef.current].filter((id) => newFileIds.has(id))
-    );
-
-    // When only removing: we already removed those layers above; do not clear the overlay.
-    if (onlyRemovingFiles) {
-      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: onlyRemovingFiles → return (no clear)");
-      lastProcessedFilesKeyRef.current = filesKey;
-      visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
-      return () => {
-        if (deferredClearIdRef.current != null) {
-          clearTimeout(deferredClearIdRef.current);
-          deferredClearIdRef.current = null;
-        }
-        map.off("click", onMapClick);
-      };
-    }
-
+    // Always full refresh so layer order matches file list order (enable/disable/reorder).
     const doFullRefresh = () => {
       overlay.clearLayers();
       trackLayersRef.current = [];
       renderedFileIdsRef.current = new Set();
     };
-
-    // When same set of files but effect re-ran (e.g. visibleTrackKeys changed from filter): re-apply
-    // filter by doing a full refresh and re-fetch so layers match the new filter.
-    if (sameFileSet) {
-      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: sameFileSet → fullRefresh to re-apply filter");
-      doFullRefresh();
-    } else if (!onlyAddingFiles) {
-      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: fullRefresh → clear + async");
-      doFullRefresh();
-    } else {
-      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: onlyAddingFiles → async add new only");
-    }
+    doFullRefresh();
+    if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] fullRefresh → clear + async (order:", files.map((f) => f.id).join(",") + ")");
 
     let cancelled = false;
-    const filesToFetch = onlyAddingFiles ? files.filter((f) => !prevIds.has(f.id)) : files;
+    const filesToFetch = files;
     if (DEBUG_GPX_OVERLAY) {
       console.log("[GpxOverlay] async filesToFetch", {
         count: filesToFetch.length,
@@ -709,9 +652,7 @@ function GpxOverlay({
         renderedFileIdsRef.current.add(rec.id);
         if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] async added file", rec.id, "tracks", tracks.length);
       }
-      if (!onlyAddingFiles) {
-        renderedFileIdsRef.current = new Set(files.map((f) => f.id));
-      }
+      renderedFileIdsRef.current = new Set(files.map((f) => f.id));
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
       lastProcessedFilesKeyRef.current = filesKey;
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] async done", { renderedIds: [...renderedFileIdsRef.current] });
