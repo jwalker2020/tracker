@@ -488,6 +488,7 @@ function GpxOverlay({
   const trackLayersRef = useRef<TrackLayerRef[]>([]);
   const renderedFileIdsRef = useRef<Set<string>>(new Set());
   const visibleTrackKeysRef = useRef<Set<string> | null>(null);
+  const lastProcessedFilesKeyRef = useRef<string>("");
   const filesKey = files.map((f) => f.id).sort().join(",");
   const DEBUG_GPX_OVERLAY = true; // set to false to disable [GpxOverlay] console logs
 
@@ -498,6 +499,19 @@ function GpxOverlay({
     }
     const overlay = layersRef.current;
     const newFileIds = new Set(files.map((f) => f.id));
+
+    const onMapClick = () => setSelectedTrack(null);
+    map.on("click", onMapClick);
+
+    // When only deps like visibleTrackKeys changed (same file set), skip all layer logic
+    // so we don't touch the overlay and risk double-remove or re-run races.
+    if (files.length > 0 && filesKey === lastProcessedFilesKeyRef.current) {
+      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] filesKey unchanged → skip (no layer changes)");
+      visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
+      return () => map.off("click", onMapClick);
+    }
+    lastProcessedFilesKeyRef.current = filesKey;
+
     const prevIds = renderedFileIdsRef.current;
     const onlyAddingFiles =
       files.length > 0 &&
@@ -524,9 +538,6 @@ function GpxOverlay({
         trackLayersCount: trackLayersRef.current.length,
       });
     }
-
-    const onMapClick = () => setSelectedTrack(null);
-    map.on("click", onMapClick);
 
     if (files.length === 0) {
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] files.length=0 → clearAll");
