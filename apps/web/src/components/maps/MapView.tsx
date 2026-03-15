@@ -503,14 +503,17 @@ function GpxOverlay({
     const onMapClick = () => setSelectedTrack(null);
     map.on("click", onMapClick);
 
-    // When only deps like visibleTrackKeys changed (same file set), skip all layer logic
-    // so we don't touch the overlay and risk double-remove or re-run races.
-    if (files.length > 0 && filesKey === lastProcessedFilesKeyRef.current) {
-      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] filesKey unchanged → skip (no layer changes)");
+    // When same file set and we already have layers, skip so we don't clear or re-run async
+    // (avoids cancelling the in-flight async and then skipping, which would leave no layers).
+    if (
+      files.length > 0 &&
+      filesKey === lastProcessedFilesKeyRef.current &&
+      trackLayersRef.current.length > 0
+    ) {
+      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] filesKey unchanged + has layers → skip");
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
       return () => map.off("click", onMapClick);
     }
-    lastProcessedFilesKeyRef.current = filesKey;
 
     const prevIds = renderedFileIdsRef.current;
     const onlyAddingFiles =
@@ -541,6 +544,7 @@ function GpxOverlay({
 
     if (files.length === 0) {
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] files.length=0 → clearAll");
+      lastProcessedFilesKeyRef.current = filesKey;
       overlay.clearLayers();
       trackLayersRef.current = [];
       renderedFileIdsRef.current = new Set();
@@ -566,6 +570,7 @@ function GpxOverlay({
     // When only removing: we already removed those layers above; do not clear the overlay.
     if (onlyRemovingFiles) {
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: onlyRemovingFiles → return (no clear)");
+      lastProcessedFilesKeyRef.current = filesKey;
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
       return () => map.off("click", onMapClick);
     }
@@ -574,6 +579,7 @@ function GpxOverlay({
     // or we would wipe the map and rely on async to repaint; a later run can cancel that async.
     if (sameFileSet) {
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: sameFileSet → return (no clear)");
+      lastProcessedFilesKeyRef.current = filesKey;
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
       return () => map.off("click", onMapClick);
     }
@@ -645,6 +651,7 @@ function GpxOverlay({
         renderedFileIdsRef.current = new Set(files.map((f) => f.id));
       }
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
+      lastProcessedFilesKeyRef.current = filesKey;
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] async done", { renderedIds: [...renderedFileIdsRef.current] });
     })();
     return () => {
