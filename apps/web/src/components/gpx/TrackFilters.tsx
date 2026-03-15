@@ -1,6 +1,7 @@
 "use client";
 
 import { RangeFilter } from "@/components/ui/range-filter";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 
 export type TrackFilterState = {
   gradeMin: number;
@@ -38,7 +39,10 @@ export function TrackFilters({
 }: TrackFiltersProps) {
   return (
     <section aria-label="Track filters">
-      <h2 className="mb-3 text-sm font-semibold text-slate-100">Track filters</h2>
+      <h2 className="mb-3 flex items-center gap-0 text-sm font-semibold text-slate-100">
+        Track filters
+        <InfoTooltip text="You can drag the sliders in this section to filter out what tracks you want to see. 'Average grade' is the average steepness for the entire track. 'Maximum grade' is the steepest part of the track. 'Curviness' is a measure of how twisty the track is." />
+      </h2>
       <div className="space-y-4">
         <RangeFilter
           label="Average grade"

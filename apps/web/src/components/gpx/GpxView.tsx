@@ -21,6 +21,7 @@ const HILLSHADE_FOR_BASEMAP: Record<string, HillshadeMode> = {
 import { GpxUploadForm } from "./GpxUploadForm";
 import { GpxFileList } from "./GpxFileList";
 import { TrackFilters, type TrackFilterState } from "./TrackFilters";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 
 const MapView = dynamic(() => import("@/components/maps/MapView").then((m) => ({ default: m.MapView })), {
   ssr: false,
@@ -342,7 +343,10 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
           />
         </section>
         <section>
-          <h2 className="mb-3 text-sm font-semibold text-slate-100">Files</h2>
+          <h2 className="mb-3 flex items-center gap-0 text-sm font-semibold text-slate-100">
+            Files
+            <InfoTooltip text="You can drag files to change the order in which they appear on the map. The files are drawn from the top down. You can select one or more files and click 'Zoom to selection' to set the map to zoom to the selected files." />
+          </h2>
           <GpxFileList
             files={files}
             orderedFileIds={orderedFileIds}
