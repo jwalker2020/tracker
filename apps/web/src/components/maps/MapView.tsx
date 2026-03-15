@@ -489,6 +489,7 @@ function GpxOverlay({
   const renderedFileIdsRef = useRef<Set<string>>(new Set());
   const visibleTrackKeysRef = useRef<Set<string> | null>(null);
   const lastProcessedFilesKeyRef = useRef<string>("");
+  const deferredClearIdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const filesKey = files.map((f) => f.id).sort().join(",");
   const DEBUG_GPX_OVERLAY = true; // set to false to disable [GpxOverlay] console logs
 
@@ -512,7 +513,13 @@ function GpxOverlay({
     ) {
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] filesKey unchanged + has layers → skip");
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
-      return () => map.off("click", onMapClick);
+      return () => {
+        if (deferredClearIdRef.current != null) {
+          clearTimeout(deferredClearIdRef.current);
+          deferredClearIdRef.current = null;
+        }
+        map.off("click", onMapClick);
+      };
     }
 
     const prevIds = renderedFileIdsRef.current;
@@ -543,13 +550,48 @@ function GpxOverlay({
     }
 
     if (files.length === 0) {
-      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] files.length=0 → clearAll");
       lastProcessedFilesKeyRef.current = filesKey;
+      // Parent sometimes passes empty briefly after unchecking one file (re-render ordering).
+      // If we still have layers, defer clear by one tick. If the next effect run has files again
+      // (spurious empty), cleanup will cancel the timeout and we keep the layers.
+      if (trackLayersRef.current.length > 0) {
+        if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] files.length=0 but have layers → defer clear");
+        const id = setTimeout(() => {
+          deferredClearIdRef.current = null;
+          if (!layersRef.current) return;
+          const o = layersRef.current;
+          o.clearLayers();
+          trackLayersRef.current = [];
+          renderedFileIdsRef.current = new Set();
+          if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] deferred clear ran");
+        }, 0);
+        deferredClearIdRef.current = id;
+        visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
+        return () => {
+          if (deferredClearIdRef.current != null) {
+            clearTimeout(deferredClearIdRef.current);
+            deferredClearIdRef.current = null;
+          }
+          map.off("click", onMapClick);
+        };
+      }
+      if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] files.length=0 → clearAll");
       overlay.clearLayers();
       trackLayersRef.current = [];
       renderedFileIdsRef.current = new Set();
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
-      return () => map.off("click", onMapClick);
+      return () => {
+        if (deferredClearIdRef.current != null) {
+          clearTimeout(deferredClearIdRef.current);
+          deferredClearIdRef.current = null;
+        }
+        map.off("click", onMapClick);
+      };
+    }
+
+    if (deferredClearIdRef.current != null) {
+      clearTimeout(deferredClearIdRef.current);
+      deferredClearIdRef.current = null;
     }
 
     // Remove layers for files no longer in the list (e.g. user unchecked one).
@@ -572,7 +614,13 @@ function GpxOverlay({
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: onlyRemovingFiles → return (no clear)");
       lastProcessedFilesKeyRef.current = filesKey;
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
-      return () => map.off("click", onMapClick);
+      return () => {
+        if (deferredClearIdRef.current != null) {
+          clearTimeout(deferredClearIdRef.current);
+          deferredClearIdRef.current = null;
+        }
+        map.off("click", onMapClick);
+      };
     }
 
     // When same set of files (e.g. effect re-ran due to visibleTrackKeys): do not clear
@@ -581,7 +629,13 @@ function GpxOverlay({
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] path: sameFileSet → return (no clear)");
       lastProcessedFilesKeyRef.current = filesKey;
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
-      return () => map.off("click", onMapClick);
+      return () => {
+        if (deferredClearIdRef.current != null) {
+          clearTimeout(deferredClearIdRef.current);
+          deferredClearIdRef.current = null;
+        }
+        map.off("click", onMapClick);
+      };
     }
 
     const doFullRefresh = () => {
@@ -656,6 +710,10 @@ function GpxOverlay({
     })();
     return () => {
       cancelled = true;
+      if (deferredClearIdRef.current != null) {
+        clearTimeout(deferredClearIdRef.current);
+        deferredClearIdRef.current = null;
+      }
       if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] cleanup (cancelled=true)");
       map.off("click", onMapClick);
     };
