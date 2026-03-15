@@ -1,9 +1,7 @@
 "use client";
 
 import { RangeFilter } from "@/components/ui/range-filter";
-
-const TRACK_FILTERS_TOOLTIP =
-  "You can drag the sliders in this section to filter out what tracks you want to see. 'Average grade' is the average steepness for the entire track. 'Maximum grade' is the steepest part of the track. 'Curviness' is a measure of how twisty the track is.";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 
 export type TrackFilterState = {
   gradeMin: number;
@@ -40,26 +38,13 @@ export function TrackFilters({
   onReset,
 }: TrackFiltersProps) {
   return (
-    <section aria-label="Track filters">
+    <section aria-label="Track filters" className="shrink-0">
       <div className="mb-3 flex items-center gap-0">
         <h2 className="text-sm font-semibold text-slate-100">Track filters</h2>
-        <span
-          className="ml-1.5 inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-slate-500 text-slate-400"
-          title={TRACK_FILTERS_TOOLTIP}
-          aria-label="More information"
-        >
-          <svg
-            className="h-2.5 w-2.5"
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            stroke="none"
-            aria-hidden
-          >
-            <circle cx="12" cy="5" r="2.5" />
-            <path d="M12 8v11" stroke="currentColor" strokeWidth="2.25" fill="none" strokeLinecap="round" />
-          </svg>
-        </span>
+        <InfoTooltip
+          alignLeft
+          text="You can drag the sliders in this section to filter out what tracks you want to see. 'Average grade' is the average steepness for the entire track. 'Maximum grade' is the steepest part of the track. 'Curviness' is a measure of how twisty the track is."
+        />
       </div>
       <div className="space-y-4">
         <RangeFilter
