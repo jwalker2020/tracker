@@ -177,9 +177,14 @@ type GpxFileListProps = {
 const filesById = (files: GpxFileRecordForDisplay[]) =>
   Object.fromEntries(files.map((f) => [f.id, f]));
 
-function reorderIds(ids: string[], draggedId: string, insertBeforeId: string): string[] {
-  if (draggedId === insertBeforeId) return ids;
+/** insertBeforeId: id to insert before, or null to append to end. */
+function reorderIds(ids: string[], draggedId: string, insertBeforeId: string | null): string[] {
   const next = ids.filter((id) => id !== draggedId);
+  if (insertBeforeId === null) {
+    next.push(draggedId);
+    return next;
+  }
+  if (draggedId === insertBeforeId) return ids;
   const insertIdx = next.indexOf(insertBeforeId);
   if (insertIdx === -1) return ids;
   next.splice(insertIdx, 0, draggedId);
@@ -232,15 +237,30 @@ export function GpxFileList({
     }
   }
 
+  function getInsertBeforeId(
+    e: React.DragEvent,
+    overId: string,
+    orderedList: GpxFileRecordForDisplay[]
+  ): string | null {
+    const index = orderedList.findIndex((f) => f.id === overId);
+    if (index === -1) return overId;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const bottomHalf = e.clientY >= rect.top + rect.height / 2;
+    if (bottomHalf && index < orderedList.length - 1) return orderedList[index + 1]!.id;
+    if (bottomHalf && index === orderedList.length - 1) return null;
+    return overId;
+  }
+
   function handleDragOver(e: React.DragEvent, overId: string) {
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
-    // dataTransfer.getData() is only available on drop in Chrome; use state
     const id = draggedId ?? e.dataTransfer.getData("text/plain");
-    if (!id || id === overId) return;
+    if (!id) return;
     const current = previewOrder ?? orderedFileIds;
-    const next = reorderIds(current, id, overId);
+    const insertBeforeId = getInsertBeforeId(e, overId, ordered);
+    if (insertBeforeId === overId && id === overId) return;
+    const next = reorderIds(current, id, insertBeforeId);
     if (next.join() !== current.join()) applyPreview(next);
   }
 
@@ -249,12 +269,11 @@ export function GpxFileList({
     e.stopPropagation();
     // Use state fallback: getData() can be empty on drop in some browsers (e.g. Safari)
     const id = (e.dataTransfer.getData("text/plain") || draggedId) ?? "";
-    if (!id || id === dropTargetId) {
-      // Don't clear ref here so handleDragEnd can still commit the preview order
-      return;
-    }
+    if (!id) return;
     const current = latestPreviewRef.current ?? previewOrder ?? orderedFileIds;
-    const next = reorderIds(current, id, dropTargetId);
+    const insertBeforeId = getInsertBeforeId(e, dropTargetId, ordered);
+    if (insertBeforeId === dropTargetId && id === dropTargetId) return;
+    const next = reorderIds(current, id, insertBeforeId);
     onReorder(next);
     latestPreviewRef.current = null;
     setDraggedId(null);
