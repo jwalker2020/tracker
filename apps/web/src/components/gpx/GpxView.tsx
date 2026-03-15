@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GpxFileRecordForDisplay } from "@/lib/gpx";
 import { BASEMAPS, DEFAULT_BASEMAP_ID } from "@/lib/maps/basemaps";
@@ -54,6 +54,8 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
     }
   );
 
+  const lastToggledIdRef = useRef<{ id: string; at: number } | null>(null);
+
   const refetch = useCallback(async () => {
     setError(undefined);
     setRefetching(true);
@@ -80,8 +82,18 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
   const onToggle = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        lastToggledIdRef.current = { id, at: Date.now() };
+        return next;
+      }
+      const last = lastToggledIdRef.current;
+      const now = Date.now();
+      if (last?.id === id && now - last.at < 200) {
+        return prev;
+      }
+      lastToggledIdRef.current = null;
+      next.add(id);
       return next;
     });
   }, []);
