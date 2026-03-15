@@ -555,8 +555,12 @@ function GpxOverlay({
       // If we still have layers, defer clear by one tick. If the next effect run has files again
       // (spurious empty), cleanup will cancel the timeout and we keep the layers.
       if (trackLayersRef.current.length > 0) {
+        if (deferredClearIdRef.current != null) {
+          clearTimeout(deferredClearIdRef.current);
+          deferredClearIdRef.current = null;
+        }
         if (DEBUG_GPX_OVERLAY) console.log("[GpxOverlay] files.length=0 but have layers → defer clear");
-        const DEFER_MS = 80;
+        const DEFER_MS = 200;
         const id = setTimeout(() => {
           deferredClearIdRef.current = null;
           if (!layersRef.current) return;
