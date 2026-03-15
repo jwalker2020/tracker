@@ -502,6 +502,10 @@ function GpxOverlay({
       files.length > 0 &&
       prevIds.size < newFileIds.size &&
       [...prevIds].every((id) => newFileIds.has(id));
+    const onlyRemovingFiles =
+      files.length > 0 &&
+      newFileIds.size < prevIds.size &&
+      [...newFileIds].every((id) => prevIds.has(id));
 
     const onMapClick = () => setSelectedTrack(null);
     map.on("click", onMapClick);
@@ -514,7 +518,7 @@ function GpxOverlay({
       return () => map.off("click", onMapClick);
     }
 
-    // Always remove layers for files no longer in the list (e.g. user unchecked one).
+    // Remove layers for files no longer in the list (e.g. user unchecked one).
     const toRemove = trackLayersRef.current.filter((r) => !newFileIds.has(r.fileId));
     for (const ref of toRemove) {
       overlay.removeLayer(ref.poly);
@@ -524,6 +528,13 @@ function GpxOverlay({
     renderedFileIdsRef.current = new Set(
       [...renderedFileIdsRef.current].filter((id) => newFileIds.has(id))
     );
+
+    // When only removing: we already removed those layers above; do not clear the overlay
+    // or the remaining file's tracks would disappear and we'd rely on async to re-add them.
+    if (onlyRemovingFiles) {
+      visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
+      return () => map.off("click", onMapClick);
+    }
 
     const doFullRefresh = () => {
       overlay.clearLayers();
