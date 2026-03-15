@@ -489,7 +489,7 @@ function GpxOverlay({
   const renderedFileIdsRef = useRef<Set<string>>(new Set());
   const visibleTrackKeysRef = useRef<Set<string> | null>(null);
   const filesKey = files.map((f) => f.id).sort().join(",");
-  const DEBUG_GPX_OVERLAY = typeof process !== "undefined" && process.env.NODE_ENV === "development";
+  const DEBUG_GPX_OVERLAY = true; // set to false to disable [GpxOverlay] console logs
 
   useEffect(() => {
     if (!layersRef.current) {
