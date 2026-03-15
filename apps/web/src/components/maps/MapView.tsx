@@ -506,6 +506,9 @@ function GpxOverlay({
       files.length > 0 &&
       newFileIds.size < prevIds.size &&
       [...newFileIds].every((id) => prevIds.has(id));
+    const sameFileSet =
+      newFileIds.size === prevIds.size &&
+      [...newFileIds].every((id) => prevIds.has(id));
 
     const onMapClick = () => setSelectedTrack(null);
     map.on("click", onMapClick);
@@ -529,9 +532,15 @@ function GpxOverlay({
       [...renderedFileIdsRef.current].filter((id) => newFileIds.has(id))
     );
 
-    // When only removing: we already removed those layers above; do not clear the overlay
-    // or the remaining file's tracks would disappear and we'd rely on async to re-add them.
+    // When only removing: we already removed those layers above; do not clear the overlay.
     if (onlyRemovingFiles) {
+      visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
+      return () => map.off("click", onMapClick);
+    }
+
+    // When same set of files (e.g. effect re-ran due to visibleTrackKeys): do not clear
+    // or we would wipe the map and rely on async to repaint; a later run can cancel that async.
+    if (sameFileSet) {
       visibleTrackKeysRef.current = visibleTrackKeys != null ? visibleTrackKeys : null;
       return () => map.off("click", onMapClick);
     }
