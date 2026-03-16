@@ -204,11 +204,15 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
     const curvinessMin = curvinesses.length > 0 ? Math.min(...curvinesses) : 0;
     const curvinessMax = curvinesses.length > 0 ? Math.max(...curvinesses) : 0;
     const averageElevationMin =
-      averageElevations.length > 0 ? Math.min(...averageElevations) : FALLBACK_ELEVATION_MIN_FT;
+      averageElevations.length > 0
+        ? Math.max(0, Math.min(...averageElevations))
+        : FALLBACK_ELEVATION_MIN_FT;
     const averageElevationMax =
       averageElevations.length > 0 ? Math.max(...averageElevations) : FALLBACK_ELEVATION_MAX_FT;
     const maximumElevationMin =
-      maximumElevations.length > 0 ? Math.min(...maximumElevations) : FALLBACK_ELEVATION_MIN_FT;
+      maximumElevations.length > 0
+        ? Math.max(0, Math.min(...maximumElevations))
+        : FALLBACK_ELEVATION_MIN_FT;
     const maximumElevationMax =
       maximumElevations.length > 0 ? Math.max(...maximumElevations) : FALLBACK_ELEVATION_MAX_FT;
     return {

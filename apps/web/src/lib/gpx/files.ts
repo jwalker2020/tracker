@@ -181,12 +181,15 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
           centerLat: t.centerLat,
           centerLng: t.centerLng,
           distanceFt: metersToFeet(t.distanceM),
-          minElevationFt: metersToFeet(t.minElevationM),
-          maxElevationFt: metersToFeet(t.maxElevationM),
-          averageElevationFt: metersToFeet(
-            typeof t.averageElevationM === "number" && Number.isFinite(t.averageElevationM)
-              ? t.averageElevationM
-              : 0
+          minElevationFt: Math.max(0, metersToFeet(t.minElevationM)),
+          maxElevationFt: Math.max(0, metersToFeet(t.maxElevationM)),
+          averageElevationFt: Math.max(
+            0,
+            metersToFeet(
+              typeof t.averageElevationM === "number" && Number.isFinite(t.averageElevationM)
+                ? t.averageElevationM
+                : 0
+            )
           ),
           totalAscentFt: metersToFeet(t.totalAscentM),
           totalDescentFt: metersToFeet(t.totalDescentM),
@@ -246,9 +249,9 @@ function oneTrackToDisplay(t: RawTrackFromArtifact): EnrichedTrackSummaryForDisp
     centerLat: t.centerLat,
     centerLng: t.centerLng,
     distanceFt: metersToFeet(t.distanceM),
-    minElevationFt: metersToFeet(t.minElevationM),
-    maxElevationFt: metersToFeet(t.maxElevationM),
-    averageElevationFt: metersToFeet(averageElevationM),
+    minElevationFt: Math.max(0, metersToFeet(t.minElevationM)),
+    maxElevationFt: Math.max(0, metersToFeet(t.maxElevationM)),
+    averageElevationFt: Math.max(0, metersToFeet(averageElevationM)),
     totalAscentFt: metersToFeet(t.totalAscentM),
     totalDescentFt: metersToFeet(t.totalDescentM),
     averageGradePct: t.averageGradePct,
