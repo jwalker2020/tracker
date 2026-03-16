@@ -144,8 +144,8 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
   const out: GpxFileRecordForDisplay = {
     ...rest,
     ...(distanceM != null && { distanceFt: metersToFeet(distanceM) }),
-    ...(minElevationM != null && { minElevationFt: metersToFeet(minElevationM) }),
-    ...(maxElevationM != null && { maxElevationFt: metersToFeet(maxElevationM) }),
+    ...(minElevationM != null && { minElevationFt: Math.max(0, metersToFeet(minElevationM)) }),
+    ...(maxElevationM != null && { maxElevationFt: Math.max(0, metersToFeet(maxElevationM)) }),
     ...(totalAscentM != null && { totalAscentFt: metersToFeet(totalAscentM) }),
     ...(totalDescentM != null && { totalDescentFt: metersToFeet(totalDescentM) }),
     ...(hasEnrichmentArtifact === true && { hasEnrichmentArtifact: true }),
@@ -283,7 +283,7 @@ function oneTrackToDisplay(t: RawTrackFromArtifact): EnrichedTrackSummaryForDisp
               const lng = typeof p.lng === "number" && Number.isFinite(p.lng) ? p.lng : undefined;
               return {
                 d: metersToFeet(p.d) / 5280,
-                e: metersToFeet(p.e),
+                e: Math.max(0, metersToFeet(p.e)),
                 ...(lat !== undefined && lng !== undefined && { lat, lng }),
               };
             })

@@ -24,8 +24,8 @@ export function formatDistanceMiles(distanceFt: number): string {
   return `${miles.toFixed(1)} miles`;
 }
 
-/** Format elevation for UI: "3,250 ft" (whole number, localized). */
+/** Format elevation for UI: "3,250 ft" (whole number, localized). Never shows below 0. */
 export function formatElevationFt(ft: number): string {
-  const n = Number.isFinite(ft) ? Math.round(ft) : 0;
+  const n = Number.isFinite(ft) ? Math.max(0, Math.round(ft)) : 0;
   return `${n.toLocaleString()} ft`;
 }

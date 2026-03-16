@@ -139,9 +139,9 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
 
   /** Grade is percent (0–100); clamp to avoid bad data showing as e.g. 1M%. */
   const GRADE_PCT_CLAMP = 100;
-  /** Fallback elevation bounds (ft) when no selected tracks have valid elevation. */
+  /** Fallback elevation bounds (ft) when no selected tracks have valid elevation. NH high point is 6,288 ft (Mt. Washington). */
   const FALLBACK_ELEVATION_MIN_FT = 0;
-  const FALLBACK_ELEVATION_MAX_FT = 10000;
+  const FALLBACK_ELEVATION_MAX_FT = 6300;
   const dataBounds = useMemo(() => {
     const tracks: {
       grade: number;
@@ -239,9 +239,9 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
     curvinessMin: 0,
     curvinessMax: 1,
     averageElevationMin: 0,
-    averageElevationMax: 10000,
+    averageElevationMax: 6300,
     maximumElevationMin: 0,
-    maximumElevationMax: 10000,
+    maximumElevationMax: 6300,
   });
 
   const selectionKey = useMemo(

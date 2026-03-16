@@ -785,7 +785,7 @@ function parseProfileJson(json: string | null): ProfilePoint[] | null {
         if (!Number.isFinite(d) || !Number.isFinite(e)) return null;
         const lat = typeof (p as ProfilePoint).lat === "number" ? (p as ProfilePoint).lat : undefined;
         const lng = typeof (p as ProfilePoint).lng === "number" ? (p as ProfilePoint).lng : undefined;
-        return { d, e, lat, lng } as ProfilePoint;
+        return { d, e: Math.max(0, e), lat, lng } as ProfilePoint;
       })
       .filter((p): p is ProfilePoint => p != null);
     return points.length >= 2 ? points : null;
