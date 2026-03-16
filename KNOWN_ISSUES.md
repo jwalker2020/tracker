@@ -8,6 +8,9 @@ Last updated: 2026-03-10
 
 ## Functional Issues
 
+- **Tracks without valid elevation data and elevation filters**
+  - When an elevation filter (average elevation or maximum elevation) is active, tracks with no valid elevation data (`validCount === 0`) are excluded from the visible set. They remain visible when elevation filters are at full range.
+
 - **No elevation without GPX `<ele>` or DEM**
   - If a GPX file contains no `<ele>` and DEM is not configured (or the track is outside DEM coverage), enrichment runs but produces no elevation stats.
   - The API may return an “all nodata / out of extent”–style warning and skip persisting elevation stats. This is by design.

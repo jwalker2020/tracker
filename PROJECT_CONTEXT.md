@@ -6,7 +6,7 @@ For external reviewers: a concise overview of the codebase without code.
 
 ## Project purpose
 
-Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX files; the app optionally enriches them with elevation (from DEM tiles and/or existing GPX `<ele>`), then displays tracks on a map with elevation, grade, and curviness profiles. Tracks can be filtered by average grade, maximum grade, and curviness. Auth is per-user; each user sees only their own files.
+Web app for **uploading, enriching, and viewing GPX tracks**. Users upload GPX files; the app optionally enriches them with elevation (from DEM tiles and/or existing GPX `<ele>`), then displays tracks on a map with elevation, grade, and curviness profiles. Tracks can be filtered by average grade, maximum grade, curviness, average elevation, and maximum elevation. Auth is per-user; each user sees only their own files.
 
 ---
 
@@ -134,10 +134,11 @@ This flow shows how GPX files move from upload through enrichment to artifact st
 
 ## Filtering system
 
-- **Track-level filters** (not file-level): average grade (%), maximum grade (%), curviness (°/mi). Stored in component state as min/max per metric.
-- **Data bounds**: From the set of tracks in the currently **selected** GPX files; each filter’s min/max is clamped to that data range.
-- **RangeFilter**: Dual-handle range slider (min/max); commits on pointer release; used for each of the three metrics in **TrackFilters**.
-- **Visibility**: A track is visible if it falls within all three filter ranges (and is in the selected files). `visibleTrackKeys` is the set of `fileId-trackIndex` that pass; the map draws only those polylines; the file list / detail view reflect the same selection.
+- **Track-level filters** (not file-level): average grade (%), maximum grade (%), curviness (°/mi), average elevation (ft), maximum elevation (ft). Stored in component state as min/max per metric.
+- **Average elevation** is the mean of valid elevation samples computed during enrichment (per-track summary). **Maximum elevation** comes from the track summary (existing per-track max). Both use feet in the UI.
+- **Data bounds**: From the set of tracks in the currently **selected** GPX files; each filter’s min/max is clamped to that data range. Elevation bounds are computed only from tracks with valid elevation data (`validCount > 0`).
+- **RangeFilter**: Dual-handle range slider (min/max); commits on pointer release; used for each of the five metrics in **TrackFilters**.
+- **Visibility**: A track is visible if it falls within all filter ranges (and is in the selected files). Tracks **without valid elevation data** (`validCount === 0`) are excluded when any elevation filter is active (narrowed from full range); they remain visible when elevation filters are at full range. `visibleTrackKeys` is the set of `fileId-trackIndex` that pass; the map draws only those polylines; the file list / detail view reflect the same selection.
 
 ---
 

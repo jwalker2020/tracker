@@ -113,7 +113,10 @@ function EnrichmentProgressIcon({ jobId }: { jobId: string }) {
     estimatedRemainingMs != null && Number.isFinite(estimatedRemainingMs)
       ? formatHhMmSs(estimatedRemainingMs)
       : null;
-  const showTimeRows = elapsedStr != null || remainingStr != null;
+  const inProgress =
+    progress != null &&
+    progress.status !== "failed" &&
+    progress.status !== "cancelled";
 
   const tooltipContent = tooltipVisible ? (
     <span
@@ -123,13 +126,15 @@ function EnrichmentProgressIcon({ jobId }: { jobId: string }) {
       role="tooltip"
     >
       <span className="block whitespace-pre-line">{lines.join("\n")}</span>
-      {showTimeRows && (
+      {inProgress && (
         <span className="mt-1 block font-mono text-slate-300">
-          {elapsedStr != null && (
+          {elapsedStr != null ? (
             <span className="block">
               <span className="inline-block w-[5.5rem] text-slate-400">Elapsed:</span>{" "}
               {elapsedStr}
             </span>
+          ) : (
+            <span className="block text-right text-slate-400">Waiting</span>
           )}
           {remainingStr != null && (
             <span className="block">

@@ -14,6 +14,7 @@ Concise status for maintainers and contributors. Update as the project evolves.
 - **GPX elevation pipeline:** GPX-only enrichment when `DEM_BASE_PATH` is unset; GPX `<ele>` takes priority when DEM is set. Parser local-name fallback for GPX 1.1 namespaced. Duplicate/zero-distance segments handled.
 - **Charts:** ECharts crosshair/floating label removed; tooltips retained. Grade chart padding. Charts require per-track artifact slice; UI shows “Loading profile…” or “not available” when slice not yet loaded or failed.
 - **Leaflet resize on panel close:** Clearing the selected track unmounts the bottom chart panel; the map container then grows in height (flex layout). Leaflet does not observe that DOM size change. **`MapResizeOnSelectionClear`** (in MapView) calls `map.invalidateSize()` on the transition from selected track → no selection so the map redraws to the new size and no gray bar remains where the panel was.
+- **Track filters:** The UI supports **five track-level filters**: average grade, maximum grade, curviness, average elevation, and maximum elevation. Filtering is track-level (not file-level). Average elevation and maximum elevation use summary metrics computed during enrichment; tracks without valid elevation data are excluded when an elevation filter is active.
 - **Docs:** PROJECT_CONTEXT.md, CURRENT_STATE.md, EXTERNAL_REVIEW_SUMMARY.md, KNOWN_ISSUES.md, and deployment docs aligned with artifact-backed architecture, read/write paths, and debugging.
 
 ---

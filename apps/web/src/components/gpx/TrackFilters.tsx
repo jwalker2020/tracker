@@ -67,7 +67,7 @@ export function TrackFilters({
         <h2 className="text-sm font-semibold text-slate-100">Track filters</h2>
         <InfoTooltip
           alignLeft
-          text="You can drag the sliders to filter tracks. 'Average grade' is the average steepness for the entire track. 'Maximum grade' is the steepest part. 'Curviness' is how twisty the track is. 'Average elevation' and 'Maximum elevation' filter by the mean and peak elevation of the track (tracks with no elevation data are hidden when an elevation filter is active)."
+          text="You can drag the sliders to filter tracks. 'Average grade' is the average steepness for the entire track. 'Maximum grade' is the steepest part. 'Curviness' is how twisty the track is. 'Average elevation' and 'Maximum elevation' filter by the average and maximum elevation of the track (tracks with no elevation data are hidden when an elevation filter is active)."
         />
       </div>
       <div className="space-y-4">

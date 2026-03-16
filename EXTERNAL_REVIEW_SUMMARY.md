@@ -39,6 +39,9 @@ GPX-only enrichment avoids DEM tile loading and raster sampling. For tracks that
 - **Public access:** Cloudflare Tunnel points only at the web service (e.g. https://tracker.nhwalker.net → web). PocketBase and worker must never have a public hostname, tunnel, or exposed port.
 - **Config:** `NEXT_PUBLIC_PB_URL=http://pocketbase:8090` for web and worker; browser does not call PocketBase directly (same-origin API). PocketBase data in named volume `pb_data` at `/app/pb_data`. Admin access to PocketBase via LAN or WireGuard only (SSH port-forward or LAN-restricted host port). See `docs/PRODUCTION_DEPLOYMENT.md` and `docs/deployment.md`.
 
+**6. Filtering system**  
+The UI supports **five track-level filters**: average grade, maximum grade, curviness, average elevation, and maximum elevation. Elevation statistics (average elevation and maximum elevation) are computed during enrichment and stored in the per-track summary. Filters operate on summary metrics in **`gpx_files.enrichedTracksSummary`**; detailed profile data for charts still comes from **`enrichment_artifacts`** (per-track slice on demand). Tracks without valid elevation data are excluded when an elevation filter is active.
+
 ---
 
 ## Files Changed

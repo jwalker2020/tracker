@@ -370,6 +370,7 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
         filterState.averageElevationMax < dataBounds.averageElevationMax ||
         filterState.maximumElevationMin > dataBounds.maximumElevationMin ||
         filterState.maximumElevationMax < dataBounds.maximumElevationMax;
+      // Exclude tracks with no valid elevation when any elevation filter is narrowed (per product spec).
       if (elevationFilterActive && tr.validCount === 0) continue;
       const avgElevOk =
         !Number.isFinite(tr.averageElevation) ||
