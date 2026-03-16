@@ -127,6 +127,7 @@ export function computeElevationStats(
     return {
       minElevationM: 0,
       maxElevationM: 0,
+      averageElevationM: 0,
       totalAscentM: 0,
       totalDescentM: 0,
       averageGradePct: 0,
@@ -138,10 +139,13 @@ export function computeElevationStats(
 
   let min = valid[0]!;
   let max = valid[0]!;
+  let sum = 0;
   for (const e of valid) {
     if (e < min) min = e;
     if (e > max) max = e;
+    sum += e;
   }
+  const averageElevationM = sum / validCount;
 
   let totalAscentM = 0;
   let totalDescentM = 0;
@@ -160,6 +164,7 @@ export function computeElevationStats(
   return {
     minElevationM: min,
     maxElevationM: max,
+    averageElevationM,
     totalAscentM,
     totalDescentM,
     averageGradePct: 0,
@@ -210,6 +215,8 @@ export function computeElevationStatsWithDistance(
 export type AccumulatedElevationState = {
   minElevationM: number;
   maxElevationM: number;
+  /** Sum of valid elevations for computing averageElevationM. */
+  sumElevationM: number;
   totalAscentM: number;
   totalDescentM: number;
   validCount: number;
@@ -231,6 +238,7 @@ export function mergeChunkElevationState(
   }
   let chunkMin = Infinity;
   let chunkMax = -Infinity;
+  let sumChunk = 0;
   let validCountChunk = 0;
   let totalAscentM = prev.totalAscentM;
   let totalDescentM = prev.totalDescentM;
@@ -241,6 +249,7 @@ export function mergeChunkElevationState(
     validCountChunk++;
     if (curr < chunkMin) chunkMin = curr;
     if (curr > chunkMax) chunkMax = curr;
+    sumChunk += curr;
     if (prior != null && Number.isFinite(prior)) {
       const d = curr - prior;
       if (Number.isFinite(d)) {
@@ -252,6 +261,7 @@ export function mergeChunkElevationState(
   }
   let min = prev.minElevationM;
   let max = prev.maxElevationM;
+  const sumElevationM = prev.sumElevationM + sumChunk;
   if (validCountChunk > 0) {
     if (prev.validCount === 0) {
       min = chunkMin;
@@ -264,6 +274,7 @@ export function mergeChunkElevationState(
   return {
     minElevationM: min,
     maxElevationM: max,
+    sumElevationM,
     totalAscentM,
     totalDescentM,
     validCount: prev.validCount + validCountChunk,

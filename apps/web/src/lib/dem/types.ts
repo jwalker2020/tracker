@@ -46,6 +46,8 @@ export type ElevationSample = {
 export type ElevationStats = {
   minElevationM: number;
   maxElevationM: number;
+  /** True mean elevation of valid points (sum(valid) / validCount). 0 when validCount === 0. */
+  averageElevationM: number;
   totalAscentM: number;
   totalDescentM: number;
   /** Signed average grade: (totalAscent - totalDescent) / horizontalDistance × 100. Negative for net descent. */
@@ -69,6 +71,8 @@ export type EnrichedTrackSummary = {
   distanceM: number;
   minElevationM: number;
   maxElevationM: number;
+  /** True mean elevation of valid profile points (m). 0 when validCount === 0. */
+  averageElevationM: number;
   totalAscentM: number;
   totalDescentM: number;
   averageGradePct: number;

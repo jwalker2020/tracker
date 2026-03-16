@@ -139,95 +139,16 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
 
   /** Grade is percent (0–100); clamp to avoid bad data showing as e.g. 1M%. */
   const GRADE_PCT_CLAMP = 100;
+  /** Fallback elevation bounds (ft) when no selected tracks have valid elevation. */
+  const FALLBACK_ELEVATION_MIN_FT = 0;
+  const FALLBACK_ELEVATION_MAX_FT = 10000;
   const dataBounds = useMemo(() => {
-    const tracks: { grade: number; maximumGrade: number; curviness: number }[] = [];
-    for (const f of selectedFiles) {
-      const list = f.enrichedTracks ?? [];
-      for (let i = 0; i < list.length; i++) {
-        const t = list[i];
-        const rawGrade =
-          typeof t?.averageGradePct === "number" && Number.isFinite(t.averageGradePct)
-            ? t.averageGradePct
-            : NaN;
-        const grade =
-          Number.isFinite(rawGrade)
-            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, Math.max(0, rawGrade)))
-            : NaN;
-        const rawMaxGrade =
-          typeof t?.maximumGradePct === "number" && Number.isFinite(t.maximumGradePct)
-            ? t.maximumGradePct
-            : NaN;
-        const maximumGrade =
-          Number.isFinite(rawMaxGrade)
-            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, rawMaxGrade))
-            : NaN;
-        const rawCurviness =
-          typeof t?.averageCurvinessDegPerMile === "number" &&
-          Number.isFinite(t.averageCurvinessDegPerMile)
-            ? t.averageCurvinessDegPerMile
-            : NaN;
-        const curviness = Number.isFinite(rawCurviness) ? Math.max(0, rawCurviness) : NaN;
-        tracks.push({ grade, maximumGrade, curviness });
-      }
-    }
-    const grades = tracks.map((tr) => tr.grade).filter((g) => Number.isFinite(g));
-    const maximumGrades = tracks.map((tr) => tr.maximumGrade).filter((g) => Number.isFinite(g));
-    const curvinesses = tracks.map((tr) => tr.curviness).filter((c) => Number.isFinite(c));
-    const gradeMin = grades.length > 0 ? Math.min(...grades) : 0;
-    const gradeMax = grades.length > 0 ? Math.max(...grades) : 0;
-    const maximumGradeMin = maximumGrades.length > 0 ? Math.min(...maximumGrades) : 0;
-    const maximumGradeMax = maximumGrades.length > 0 ? Math.max(...maximumGrades) : 0;
-    const curvinessMin = curvinesses.length > 0 ? Math.min(...curvinesses) : 0;
-    const curvinessMax = curvinesses.length > 0 ? Math.max(...curvinesses) : 0;
-    return {
-      gradeMin,
-      gradeMax: gradeMax > gradeMin ? gradeMax : gradeMin + 1,
-      maximumGradeMin,
-      maximumGradeMax: maximumGradeMax > maximumGradeMin ? maximumGradeMax : maximumGradeMin + 1,
-      curvinessMin,
-      curvinessMax: curvinessMax > curvinessMin ? curvinessMax : curvinessMin + 1,
-    };
-  }, [selectedFiles]);
-
-  const [filterState, setFilterState] = useState<TrackFilterState>({
-    gradeMin: 0,
-    gradeMax: 1,
-    maximumGradeMin: 0,
-    maximumGradeMax: 1,
-    curvinessMin: 0,
-    curvinessMax: 1,
-  });
-
-  const selectionKey = useMemo(
-    () => selectedFiles.map((f) => f.id).sort().join(","),
-    [selectedFiles]
-  );
-  useEffect(() => {
-    setFilterState({
-      gradeMin: dataBounds.gradeMin,
-      gradeMax: dataBounds.gradeMax,
-      maximumGradeMin: dataBounds.maximumGradeMin,
-      maximumGradeMax: dataBounds.maximumGradeMax,
-      curvinessMin: dataBounds.curvinessMin,
-      curvinessMax: dataBounds.curvinessMax,
-    });
-  }, [
-    selectionKey,
-    dataBounds.gradeMin,
-    dataBounds.gradeMax,
-    dataBounds.maximumGradeMin,
-    dataBounds.maximumGradeMax,
-    dataBounds.curvinessMin,
-    dataBounds.curvinessMax,
-  ]);
-
-  const { visibleTrackKeys, totalTracks, visibleCount } = useMemo(() => {
     const tracks: {
-      fileId: string;
-      trackIndex: number;
       grade: number;
       maximumGrade: number;
       curviness: number;
+      averageElevation: number;
+      maximumElevation: number;
     }[] = [];
     for (const f of selectedFiles) {
       const list = f.enrichedTracks ?? [];
@@ -255,21 +176,185 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
             ? t.averageCurvinessDegPerMile
             : NaN;
         const curviness = Number.isFinite(rawCurviness) ? Math.max(0, rawCurviness) : NaN;
-        tracks.push({ fileId: f.id, trackIndex: i, grade, maximumGrade, curviness });
+        const hasValidElevation = (t?.validCount ?? 0) > 0;
+        const averageElevation =
+          hasValidElevation &&
+          typeof t?.averageElevationFt === "number" &&
+          Number.isFinite(t.averageElevationFt)
+            ? t.averageElevationFt
+            : NaN;
+        const maximumElevation =
+          hasValidElevation &&
+          typeof t?.maxElevationFt === "number" &&
+          Number.isFinite(t.maxElevationFt)
+            ? t.maxElevationFt
+            : NaN;
+        tracks.push({ grade, maximumGrade, curviness, averageElevation, maximumElevation });
+      }
+    }
+    const grades = tracks.map((tr) => tr.grade).filter((g) => Number.isFinite(g));
+    const maximumGrades = tracks.map((tr) => tr.maximumGrade).filter((g) => Number.isFinite(g));
+    const curvinesses = tracks.map((tr) => tr.curviness).filter((c) => Number.isFinite(c));
+    const averageElevations = tracks.map((tr) => tr.averageElevation).filter((e) => Number.isFinite(e));
+    const maximumElevations = tracks.map((tr) => tr.maximumElevation).filter((e) => Number.isFinite(e));
+    const gradeMin = grades.length > 0 ? Math.min(...grades) : 0;
+    const gradeMax = grades.length > 0 ? Math.max(...grades) : 0;
+    const maximumGradeMin = maximumGrades.length > 0 ? Math.min(...maximumGrades) : 0;
+    const maximumGradeMax = maximumGrades.length > 0 ? Math.max(...maximumGrades) : 0;
+    const curvinessMin = curvinesses.length > 0 ? Math.min(...curvinesses) : 0;
+    const curvinessMax = curvinesses.length > 0 ? Math.max(...curvinesses) : 0;
+    const averageElevationMin =
+      averageElevations.length > 0 ? Math.min(...averageElevations) : FALLBACK_ELEVATION_MIN_FT;
+    const averageElevationMax =
+      averageElevations.length > 0 ? Math.max(...averageElevations) : FALLBACK_ELEVATION_MAX_FT;
+    const maximumElevationMin =
+      maximumElevations.length > 0 ? Math.min(...maximumElevations) : FALLBACK_ELEVATION_MIN_FT;
+    const maximumElevationMax =
+      maximumElevations.length > 0 ? Math.max(...maximumElevations) : FALLBACK_ELEVATION_MAX_FT;
+    return {
+      gradeMin,
+      gradeMax: gradeMax > gradeMin ? gradeMax : gradeMin + 1,
+      maximumGradeMin,
+      maximumGradeMax: maximumGradeMax > maximumGradeMin ? maximumGradeMax : maximumGradeMin + 1,
+      curvinessMin,
+      curvinessMax: curvinessMax > curvinessMin ? curvinessMax : curvinessMin + 1,
+      averageElevationMin,
+      averageElevationMax:
+        averageElevationMax > averageElevationMin ? averageElevationMax : averageElevationMin + 1,
+      maximumElevationMin,
+      maximumElevationMax:
+        maximumElevationMax > maximumElevationMin ? maximumElevationMax : maximumElevationMin + 1,
+    };
+  }, [selectedFiles]);
+
+  const [filterState, setFilterState] = useState<TrackFilterState>({
+    gradeMin: 0,
+    gradeMax: 1,
+    maximumGradeMin: 0,
+    maximumGradeMax: 1,
+    curvinessMin: 0,
+    curvinessMax: 1,
+    averageElevationMin: 0,
+    averageElevationMax: 10000,
+    maximumElevationMin: 0,
+    maximumElevationMax: 10000,
+  });
+
+  const selectionKey = useMemo(
+    () => selectedFiles.map((f) => f.id).sort().join(","),
+    [selectedFiles]
+  );
+  useEffect(() => {
+    setFilterState({
+      gradeMin: dataBounds.gradeMin,
+      gradeMax: dataBounds.gradeMax,
+      maximumGradeMin: dataBounds.maximumGradeMin,
+      maximumGradeMax: dataBounds.maximumGradeMax,
+      curvinessMin: dataBounds.curvinessMin,
+      curvinessMax: dataBounds.curvinessMax,
+      averageElevationMin: dataBounds.averageElevationMin,
+      averageElevationMax: dataBounds.averageElevationMax,
+      maximumElevationMin: dataBounds.maximumElevationMin,
+      maximumElevationMax: dataBounds.maximumElevationMax,
+    });
+  }, [
+    selectionKey,
+    dataBounds.gradeMin,
+    dataBounds.gradeMax,
+    dataBounds.maximumGradeMin,
+    dataBounds.maximumGradeMax,
+    dataBounds.curvinessMin,
+    dataBounds.curvinessMax,
+    dataBounds.averageElevationMin,
+    dataBounds.averageElevationMax,
+    dataBounds.maximumElevationMin,
+    dataBounds.maximumElevationMax,
+  ]);
+
+  const { visibleTrackKeys, totalTracks, visibleCount } = useMemo(() => {
+    const tracks: {
+      fileId: string;
+      trackIndex: number;
+      grade: number;
+      maximumGrade: number;
+      curviness: number;
+      averageElevation: number;
+      maximumElevation: number;
+      validCount: number;
+    }[] = [];
+    for (const f of selectedFiles) {
+      const list = f.enrichedTracks ?? [];
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        const rawGrade =
+          typeof t?.averageGradePct === "number" && Number.isFinite(t.averageGradePct)
+            ? t.averageGradePct
+            : NaN;
+        const grade =
+          Number.isFinite(rawGrade)
+            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, Math.max(0, rawGrade)))
+            : NaN;
+        const rawMaxGrade =
+          typeof t?.maximumGradePct === "number" && Number.isFinite(t.maximumGradePct)
+            ? t.maximumGradePct
+            : NaN;
+        const maximumGrade =
+          Number.isFinite(rawMaxGrade)
+            ? Math.max(0, Math.min(GRADE_PCT_CLAMP, rawMaxGrade))
+            : NaN;
+        const rawCurviness =
+          typeof t?.averageCurvinessDegPerMile === "number" &&
+          Number.isFinite(t.averageCurvinessDegPerMile)
+            ? t.averageCurvinessDegPerMile
+            : NaN;
+        const curviness = Number.isFinite(rawCurviness) ? Math.max(0, rawCurviness) : NaN;
+        const validCount = t?.validCount ?? 0;
+        const averageElevation =
+          validCount > 0 &&
+          typeof t?.averageElevationFt === "number" &&
+          Number.isFinite(t.averageElevationFt)
+            ? t.averageElevationFt
+            : NaN;
+        const maximumElevation =
+          validCount > 0 &&
+          typeof t?.maxElevationFt === "number" &&
+          Number.isFinite(t.maxElevationFt)
+            ? t.maxElevationFt
+            : NaN;
+        tracks.push({
+          fileId: f.id,
+          trackIndex: i,
+          grade,
+          maximumGrade,
+          curviness,
+          averageElevation,
+          maximumElevation,
+          validCount,
+        });
       }
     }
     const keys = new Set<string>();
     const dataGradeRange = dataBounds.gradeMax - dataBounds.gradeMin;
     const dataMaxGradeRange = dataBounds.maximumGradeMax - dataBounds.maximumGradeMin;
     const dataCurvRange = dataBounds.curvinessMax - dataBounds.curvinessMin;
+    const dataAvgElevRange = dataBounds.averageElevationMax - dataBounds.averageElevationMin;
+    const dataMaxElevRange = dataBounds.maximumElevationMax - dataBounds.maximumElevationMin;
     const atFullRange =
       (filterState.gradeMin <= dataBounds.gradeMin &&
         filterState.gradeMax >= dataBounds.gradeMax &&
         filterState.maximumGradeMin <= dataBounds.maximumGradeMin &&
         filterState.maximumGradeMax >= dataBounds.maximumGradeMax &&
         filterState.curvinessMin <= dataBounds.curvinessMin &&
-        filterState.curvinessMax >= dataBounds.curvinessMax) ||
-      (dataGradeRange <= 1 && dataMaxGradeRange <= 1 && dataCurvRange <= 1);
+        filterState.curvinessMax >= dataBounds.curvinessMax &&
+        filterState.averageElevationMin <= dataBounds.averageElevationMin &&
+        filterState.averageElevationMax >= dataBounds.averageElevationMax &&
+        filterState.maximumElevationMin <= dataBounds.maximumElevationMin &&
+        filterState.maximumElevationMax >= dataBounds.maximumElevationMax) ||
+      (dataGradeRange <= 1 &&
+        dataMaxGradeRange <= 1 &&
+        dataCurvRange <= 1 &&
+        dataAvgElevRange <= 1 &&
+        dataMaxElevRange <= 1);
     for (const tr of tracks) {
       if (atFullRange) {
         keys.add(`${tr.fileId}-${tr.trackIndex}`);
@@ -280,12 +365,28 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
         ? tr.maximumGrade >= filterState.maximumGradeMin &&
           tr.maximumGrade <= filterState.maximumGradeMax
         : true;
+      const elevationFilterActive =
+        filterState.averageElevationMin > dataBounds.averageElevationMin ||
+        filterState.averageElevationMax < dataBounds.averageElevationMax ||
+        filterState.maximumElevationMin > dataBounds.maximumElevationMin ||
+        filterState.maximumElevationMax < dataBounds.maximumElevationMax;
+      if (elevationFilterActive && tr.validCount === 0) continue;
+      const avgElevOk =
+        !Number.isFinite(tr.averageElevation) ||
+        (tr.averageElevation >= filterState.averageElevationMin &&
+          tr.averageElevation <= filterState.averageElevationMax);
+      const maxElevOk =
+        !Number.isFinite(tr.maximumElevation) ||
+        (tr.maximumElevation >= filterState.maximumElevationMin &&
+          tr.maximumElevation <= filterState.maximumElevationMax);
       if (
         tr.grade >= filterState.gradeMin &&
         tr.grade <= filterState.gradeMax &&
         maxGradeOk &&
         tr.curviness >= filterState.curvinessMin &&
-        tr.curviness <= filterState.curvinessMax
+        tr.curviness <= filterState.curvinessMax &&
+        avgElevOk &&
+        maxElevOk
       ) {
         keys.add(`${tr.fileId}-${tr.trackIndex}`);
       }
@@ -399,6 +500,14 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
               dataMin: dataBounds.curvinessMin,
               dataMax: dataBounds.curvinessMax,
             }}
+            averageElevationBounds={{
+              dataMin: dataBounds.averageElevationMin,
+              dataMax: dataBounds.averageElevationMax,
+            }}
+            maximumElevationBounds={{
+              dataMin: dataBounds.maximumElevationMin,
+              dataMax: dataBounds.maximumElevationMax,
+            }}
             totalTracks={totalTracks}
             visibleCount={visibleCount}
             onReset={() => {
@@ -409,6 +518,10 @@ export function GpxView({ initialFiles, initialError }: GpxViewProps) {
                 maximumGradeMax: dataBounds.maximumGradeMax,
                 curvinessMin: dataBounds.curvinessMin,
                 curvinessMax: dataBounds.curvinessMax,
+                averageElevationMin: dataBounds.averageElevationMin,
+                averageElevationMax: dataBounds.averageElevationMax,
+                maximumElevationMin: dataBounds.maximumElevationMin,
+                maximumElevationMax: dataBounds.maximumElevationMax,
               });
             }}
           />

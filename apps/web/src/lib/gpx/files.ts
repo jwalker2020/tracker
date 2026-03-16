@@ -96,6 +96,8 @@ export type EnrichedTrackSummaryForDisplay = {
   distanceFt: number;
   minElevationFt: number;
   maxElevationFt: number;
+  /** True mean elevation of valid profile points (ft). */
+  averageElevationFt: number;
   totalAscentFt: number;
   totalDescentFt: number;
   averageGradePct: number;
@@ -161,6 +163,7 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
         distanceM: number;
         minElevationM: number;
         maxElevationM: number;
+        averageElevationM?: number;
         totalAscentM: number;
         totalDescentM: number;
         averageGradePct: number;
@@ -180,6 +183,11 @@ export function gpxRecordToDisplay(record: GpxFileRecord): GpxFileRecordForDispl
           distanceFt: metersToFeet(t.distanceM),
           minElevationFt: metersToFeet(t.minElevationM),
           maxElevationFt: metersToFeet(t.maxElevationM),
+          averageElevationFt: metersToFeet(
+            typeof t.averageElevationM === "number" && Number.isFinite(t.averageElevationM)
+              ? t.averageElevationM
+              : 0
+          ),
           totalAscentFt: metersToFeet(t.totalAscentM),
           totalDescentFt: metersToFeet(t.totalDescentM),
           averageGradePct: t.averageGradePct,
@@ -214,6 +222,7 @@ type RawTrackFromArtifact = {
   distanceM: number;
   minElevationM: number;
   maxElevationM: number;
+  averageElevationM?: number;
   totalAscentM: number;
   totalDescentM: number;
   averageGradePct: number;
@@ -225,6 +234,10 @@ type RawTrackFromArtifact = {
 };
 
 function oneTrackToDisplay(t: RawTrackFromArtifact): EnrichedTrackSummaryForDisplay {
+  const averageElevationM =
+    typeof t.averageElevationM === "number" && Number.isFinite(t.averageElevationM)
+      ? t.averageElevationM
+      : 0;
   return {
     trackIndex: t.trackIndex,
     name: t.name,
@@ -235,6 +248,7 @@ function oneTrackToDisplay(t: RawTrackFromArtifact): EnrichedTrackSummaryForDisp
     distanceFt: metersToFeet(t.distanceM),
     minElevationFt: metersToFeet(t.minElevationM),
     maxElevationFt: metersToFeet(t.maxElevationM),
+    averageElevationFt: metersToFeet(averageElevationM),
     totalAscentFt: metersToFeet(t.totalAscentM),
     totalDescentFt: metersToFeet(t.totalDescentM),
     averageGradePct: t.averageGradePct,

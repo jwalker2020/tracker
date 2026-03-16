@@ -24,6 +24,7 @@ const EMPTY_RESULT: ElevationEnrichmentResult = {
   stats: {
     minElevationM: 0,
     maxElevationM: 0,
+    averageElevationM: 0,
     totalAscentM: 0,
     totalDescentM: 0,
     averageGradePct: 0,
@@ -402,9 +403,10 @@ function enrichSingleTrackGpxOnly(
         totalCount: points.length,
         validCount,
       }
-    : {
+      : {
         minElevationM: 0,
         maxElevationM: 0,
+        averageElevationM: 0,
         totalAscentM: 0,
         totalDescentM: 0,
         averageGradePct: 0,
@@ -596,12 +598,20 @@ export async function enrichSingleTrackFromIndex(
 
   if (resumeState && resumeState.nextPointIndex > 0 && resumeState.nextPointIndex < totalPoints) {
     startIndex = resumeState.nextPointIndex;
-    accumulatedState = { ...resumeState.accumulatedState };
+    const prev = resumeState.accumulatedState;
+    accumulatedState = {
+      ...prev,
+      sumElevationM:
+        typeof (prev as { sumElevationM?: number }).sumElevationM === "number"
+          ? (prev as { sumElevationM: number }).sumElevationM
+          : 0,
+    };
     profileSoFar = [...resumeState.profileSoFar];
   } else {
     accumulatedState = {
       minElevationM: 0,
       maxElevationM: 0,
+      sumElevationM: 0,
       totalAscentM: 0,
       totalDescentM: 0,
       validCount: 0,
@@ -838,6 +848,10 @@ export async function enrichSingleTrackFromIndex(
     : {
         minElevationM: accumulatedState.minElevationM,
         maxElevationM: accumulatedState.maxElevationM,
+        averageElevationM:
+          accumulatedState.validCount > 0
+            ? accumulatedState.sumElevationM / accumulatedState.validCount
+            : 0,
         totalAscentM: accumulatedState.totalAscentM,
         totalDescentM: accumulatedState.totalDescentM,
         averageGradePct: 0,
@@ -1221,6 +1235,7 @@ function toEnrichedTrackSummary(
     distanceM: result.distanceM,
     minElevationM: result.stats.minElevationM,
     maxElevationM: result.stats.maxElevationM,
+    averageElevationM: result.stats.averageElevationM,
     totalAscentM: result.stats.totalAscentM,
     totalDescentM: result.stats.totalDescentM,
     averageGradePct,

@@ -10,6 +10,10 @@ export type TrackFilterState = {
   maximumGradeMax: number;
   curvinessMin: number;
   curvinessMax: number;
+  averageElevationMin: number;
+  averageElevationMax: number;
+  maximumElevationMin: number;
+  maximumElevationMax: number;
 };
 
 export type TrackFiltersProps = {
@@ -21,6 +25,8 @@ export type TrackFiltersProps = {
   gradeBounds: { dataMin: number; dataMax: number };
   maximumGradeBounds: { dataMin: number; dataMax: number };
   curvinessBounds: { dataMin: number; dataMax: number };
+  averageElevationBounds: { dataMin: number; dataMax: number };
+  maximumElevationBounds: { dataMin: number; dataMax: number };
   totalTracks: number;
   visibleCount: number;
   /** Reset to full range (show all). */
@@ -33,17 +39,35 @@ export function TrackFilters({
   gradeBounds,
   maximumGradeBounds,
   curvinessBounds,
+  averageElevationBounds,
+  maximumElevationBounds,
   totalTracks,
   visibleCount,
   onReset,
 }: TrackFiltersProps) {
+  const avgElevMin = Math.max(
+    averageElevationBounds.dataMin,
+    Math.min(averageElevationBounds.dataMax, filterState.averageElevationMin)
+  );
+  const avgElevMax = Math.max(
+    averageElevationBounds.dataMin,
+    Math.min(averageElevationBounds.dataMax, filterState.averageElevationMax)
+  );
+  const maxElevMin = Math.max(
+    maximumElevationBounds.dataMin,
+    Math.min(maximumElevationBounds.dataMax, filterState.maximumElevationMin)
+  );
+  const maxElevMax = Math.max(
+    maximumElevationBounds.dataMin,
+    Math.min(maximumElevationBounds.dataMax, filterState.maximumElevationMax)
+  );
   return (
     <section aria-label="Track filters" className="shrink-0">
       <div className="mb-3 flex items-center gap-0">
         <h2 className="text-sm font-semibold text-slate-100">Track filters</h2>
         <InfoTooltip
           alignLeft
-          text="You can drag the sliders in this section to filter out what tracks you want to see. 'Average grade' is the average steepness for the entire track. 'Maximum grade' is the steepest part of the track. 'Curviness' is a measure of how twisty the track is."
+          text="You can drag the sliders to filter tracks. 'Average grade' is the average steepness for the entire track. 'Maximum grade' is the steepest part. 'Curviness' is how twisty the track is. 'Average elevation' and 'Maximum elevation' filter by the mean and peak elevation of the track (tracks with no elevation data are hidden when an elevation filter is active)."
         />
       </div>
       <div className="space-y-4">
@@ -79,6 +103,28 @@ export function TrackFilters({
           onMaxChange={(v) => onFilterChange({ curvinessMax: v })}
           step={1}
           unit=" °/mi"
+        />
+        <RangeFilter
+          label="Average elevation"
+          dataMin={averageElevationBounds.dataMin}
+          dataMax={averageElevationBounds.dataMax}
+          valueMin={avgElevMin}
+          valueMax={avgElevMax}
+          onMinChange={(v) => onFilterChange({ averageElevationMin: v })}
+          onMaxChange={(v) => onFilterChange({ averageElevationMax: v })}
+          step={50}
+          unit=" ft"
+        />
+        <RangeFilter
+          label="Maximum elevation"
+          dataMin={maximumElevationBounds.dataMin}
+          dataMax={maximumElevationBounds.dataMax}
+          valueMin={maxElevMin}
+          valueMax={maxElevMax}
+          onMinChange={(v) => onFilterChange({ maximumElevationMin: v })}
+          onMaxChange={(v) => onFilterChange({ maximumElevationMax: v })}
+          step={50}
+          unit=" ft"
         />
         <div className="flex items-center justify-between gap-2">
           <button
