@@ -17,6 +17,8 @@ export type RangeFilterProps = {
   onMaxChange: (v: number) => void;
   step?: number;
   unit?: string;
+  /** Decimal places for displayed values (e.g. 0 = whole numbers, 1 = one decimal). Default 2. */
+  valueDecimals?: number;
 };
 
 function roundToStep(value: number, step: number, min: number): number {
@@ -39,6 +41,7 @@ export function RangeFilter({
   onMaxChange,
   step = 0.1,
   unit = "",
+  valueDecimals = 2,
 }: RangeFilterProps) {
   const [dragging, setDragging] = useState<"min" | "max" | null>(null);
   const [, setTick] = useState(0);
@@ -178,7 +181,7 @@ export function RangeFilter({
       <div className="flex items-center justify-between text-xs text-slate-300">
         <span>{label}</span>
         <span>
-          {Number(displayMin).toFixed(2)}{unit} – {Number(displayMax).toFixed(2)}{unit}
+          {Number(displayMin).toFixed(valueDecimals)}{unit} – {Number(displayMax).toFixed(valueDecimals)}{unit}
         </span>
       </div>
       <div

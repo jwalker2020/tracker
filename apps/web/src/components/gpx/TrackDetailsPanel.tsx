@@ -38,6 +38,10 @@ export function TrackDetailsPanel({ trackName, track }: TrackDetailsPanelProps) 
             <dd className="text-slate-200 tabular-nums">{formatElevationFt(track.maxElevationFt)}</dd>
           </div>
           <div className="flex justify-between gap-2">
+            <dt className="text-slate-400">Average Elevation</dt>
+            <dd className="text-slate-200 tabular-nums">{formatElevationFt(track.averageElevationFt)}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
             <dt className="flex items-center gap-0 text-slate-400">
               Elevation Δ
               <InfoTooltip text="The total elevation change, up AND down, over the entire track." />
@@ -53,7 +57,7 @@ export function TrackDetailsPanel({ trackName, track }: TrackDetailsPanelProps) 
             </dt>
             <dd className="text-slate-200 tabular-nums">
               {typeof track.averageGradePct === "number" && Number.isFinite(track.averageGradePct)
-                ? `${Math.abs(track.averageGradePct).toFixed(2)}%`
+                ? `${Math.abs(track.averageGradePct).toFixed(1)}%`
                 : "—"}
             </dd>
           </div>
@@ -64,7 +68,7 @@ export function TrackDetailsPanel({ trackName, track }: TrackDetailsPanelProps) 
             </dt>
             <dd className="text-slate-200 tabular-nums">
               {typeof track.maximumGradePct === "number" && Number.isFinite(track.maximumGradePct)
-                ? `${track.maximumGradePct.toFixed(2)}%`
+                ? `${track.maximumGradePct.toFixed(1)}%`
                 : "—"}
             </dd>
           </div>

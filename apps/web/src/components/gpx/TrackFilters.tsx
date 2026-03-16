@@ -81,6 +81,7 @@ export function TrackFilters({
           onMaxChange={(v) => onFilterChange({ gradeMax: v })}
           step={0.5}
           unit="%"
+          valueDecimals={1}
         />
         <RangeFilter
           label="Maximum grade"
@@ -92,6 +93,7 @@ export function TrackFilters({
           onMaxChange={(v) => onFilterChange({ maximumGradeMax: v })}
           step={0.5}
           unit="%"
+          valueDecimals={1}
         />
         <RangeFilter
           label="Curviness"
@@ -114,6 +116,7 @@ export function TrackFilters({
           onMaxChange={(v) => onFilterChange({ averageElevationMax: v })}
           step={50}
           unit=" ft"
+          valueDecimals={0}
         />
         <RangeFilter
           label="Maximum elevation"
@@ -125,6 +128,7 @@ export function TrackFilters({
           onMaxChange={(v) => onFilterChange({ maximumElevationMax: v })}
           step={50}
           unit=" ft"
+          valueDecimals={0}
         />
         <div className="flex items-center justify-between gap-2">
           <button
